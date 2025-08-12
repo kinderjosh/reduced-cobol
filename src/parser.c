@@ -75,7 +75,12 @@ void eat_until(Parser *prs, TokenType type) {
 bool expect_identifier(Parser *prs, char *id) {
     if (prs->tok->type != TOK_ID) {
         log_error(prs->file, prs->tok->ln, prs->tok->col);
-        fprintf(stderr, "found '%s' when expecting identifier '%s'\n", tokentype_to_string(prs->tok->type), id);
+
+        if (id == NULL)
+            fprintf(stderr, "found '%s' when expecting identifier\n", tokentype_to_string(prs->tok->type));
+        else
+            fprintf(stderr, "found '%s' when expecting identifier '%s'\n", tokentype_to_string(prs->tok->type), id);
+
         show_error(prs->file, prs->tok->ln, prs->tok->col);
         return false;
     } else if (id != NULL && strcmp(prs->tok->value, id) != 0) {
