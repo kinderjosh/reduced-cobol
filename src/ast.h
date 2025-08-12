@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 typedef enum {
     INTR_STOP,
@@ -10,9 +11,19 @@ typedef enum {
 } IntrinsicType;
 
 typedef enum {
+    TYPE_ANY,
+    TYPE_ALPHABETIC,
     TYPE_NUMERIC,
     TYPE_ALPHANUMERIC
-} DataType;
+} PictureType;
+
+typedef struct {
+    char *file;
+    char *name;
+    PictureType type;
+    unsigned int count;
+    bool used;
+} Variable;
 
 typedef enum {
     AST_NOP,
@@ -54,15 +65,15 @@ typedef struct AST {
 
         struct {
             char *name;
-            AST *sym;
+            Variable *sym;
         } var;
 
         struct {
+            unsigned int level;
             char *name;
-            DataType type;
+            PictureType type;
             AST *value;
             unsigned int count;
-            AST *sym;
         } pic;
 
         struct {
