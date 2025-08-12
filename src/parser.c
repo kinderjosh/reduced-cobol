@@ -119,6 +119,8 @@ void assert_in_division(Parser *prs, unsigned int div, size_t ln, size_t col) {
 
     if (div == DIV_IDENTIFICATION)
         str = "IDENTIFICATION";
+    else if (div == DIV_PROCEDURE)
+        str = "PROCEDURE";
 
     if (prs->cur_division != div) {
         log_error(prs->file, ln, col);
