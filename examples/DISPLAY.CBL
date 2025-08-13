@@ -19,7 +19,7 @@
            DISPLAY MY-STRING.
            DISPLAY MY-MIXED-STRING.
 
-      * Displaying variables with variables.
+      * Displaying strings with variables.
       * Note that a newline is only printed when the statement is ended.
            DIVIDE 2 INTO MY-NUMBER GIVING HALF.
            DISPLAY "Half of " MY-NUMBER " is " HALF.
