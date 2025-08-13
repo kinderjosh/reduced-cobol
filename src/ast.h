@@ -1,14 +1,10 @@
 #ifndef AST_H
 #define AST_H
 
+#include "token.h"
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
-
-typedef enum {
-    INTR_STOP,
-    INTR_DISPLAY
-} IntrinsicType;
 
 typedef enum {
     TYPE_ANY,
@@ -33,9 +29,11 @@ typedef enum {
     AST_STRING,
     AST_VAR,
     AST_PROC,
+    AST_STOP,
+    AST_DISPLAY,
     AST_PIC,
     AST_MOVE,
-    AST_INTRINSIC
+    AST_ARITHMETIC
 } ASTType;
 
 typedef struct AST AST;
@@ -69,6 +67,11 @@ typedef struct AST {
         } var;
 
         struct {
+            AST *value;
+            bool add_newline;
+        } display;
+
+        struct {
             unsigned int level;
             char *name;
             PictureType type;
@@ -82,9 +85,13 @@ typedef struct AST {
         } move;
 
         struct {
-            IntrinsicType type;
-            AST *arg;
-        } intrinsic;
+            char *name;
+            AST *left;
+            AST *right;
+            AST *dst;
+            bool implicit_giving;
+            bool cloned_left;
+        } arithmetic;
     };
 } AST;
 

@@ -19,6 +19,10 @@
 
 static Variable variables[TABLE_SIZE];
 
+// Sometimes we want to return multiple things but we can't,
+// so we just append to this list.
+static ASTList *root_ptr;
+
 char *cur_file;
 
 uint32_t hash_FNV1a(const char *data, size_t size) {
@@ -210,6 +214,32 @@ void parse_section(Parser *prs, char *sect) {
         prs->cur_section = SECT_WORKING_STORAGE;
 }
 
+AST *parse_display(Parser *prs, size_t ln, size_t col) {
+    if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
+        return NOP(ln, col);
+
+    AST *ast = create_ast(AST_DISPLAY, ln, col);
+    ast->display.value = parse_value(prs, TYPE_ANY);
+
+    if (ast->display.value->type == AST_INT || ast->display.value->type == AST_FLOAT) {
+        log_error(ast->file, ast->ln, ast->col);
+        fprintf(stderr, "attempting to display constant number '%s'\n", asttype_to_string(ast->display.value->type));
+        show_error(ast->file, ast->ln, ast->col);
+    }
+
+    if (prs->tok->type == TOK_DOT) {
+        ast->display.add_newline = true;
+        return ast;
+    }
+
+    // String concatenation going on here, we need to print the original string first.
+    ast->display.add_newline = false;
+    astlist_push(root_ptr, ast);
+
+    // Let's just be quirky and use recursion.
+    return parse_display(prs, prs->tok->ln, prs->tok->col);
+}
+
 AST *parse_move(Parser *prs, size_t ln, size_t col) {
     if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
         return NOP(ln, col);
@@ -254,6 +284,95 @@ AST *parse_move(Parser *prs, size_t ln, size_t col) {
     eat(prs, TOK_ID);
     ast->move.dst = var;
     eat(prs, TOK_ID);
+    return ast;
+}
+
+AST *parse_arithmetic(Parser *prs, char *name, size_t ln, size_t col) {
+    // TODO: Probably type this somehow.
+    AST *value = parse_value(prs, TYPE_ANY);
+
+    if (strcmp(name, "ADD") == 0 && !expect_identifier(prs, "TO")) {
+        delete_ast(value);
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    } else if (strcmp(name, "SUBTRACT") == 0 && !expect_identifier(prs, "FROM")) {
+        delete_ast(value);
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    } else if (strcmp(name, "MULTIPLY") == 0 && !expect_identifier(prs, "BY")) {
+        delete_ast(value);
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    } else if (strcmp(name, "DIVIDE") == 0 && !expect_identifier(prs, "INTO")) {
+        delete_ast(value);
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    eat(prs, TOK_ID);
+    AST *right = parse_value(prs, TYPE_ANY);
+    AST *give = NULL;
+
+    if (strcmp(prs->tok->value, "GIVING") != 0) {
+        if (strcmp(name, "MULTIPLY") == 0 || strcmp(name, "DIVIDE") == 0) {
+            log_error(prs->file, ln, col);
+            fprintf(stderr, "%s cannot be given implicitly\n", name);
+            show_error(prs->file, ln, col);
+        }
+
+        // If we did get one of these, it'll show an error below anyway.
+        if (right->type != AST_VAR) {
+            log_error(right->file, right->ln, right->col);
+            fprintf(stderr, "implicit giving statement but right value isn't a storage value\n");
+            show_error(right->file, right->ln, right->col);
+        }
+    } else {
+        eat(prs, TOK_ID);
+        give = parse_value(prs, TYPE_ANY);
+
+        if (give->type != AST_VAR) {
+            log_error(give->file, give->ln, give->col);
+            fprintf(stderr, "giving value isn't a storage value\n");
+            show_error(give->file, give->ln, give->col);
+        }
+    }
+
+    // MULTIPLY and DIVIDE can't be implicitly given.
+    if (strcmp(name, "DIVIDE") == 0 && strcmp(prs->tok->value, "REMAINDER") == 0) {
+        eat(prs, TOK_ID);
+        AST *remainder_dst = parse_value(prs, TYPE_ANY);
+
+        if (remainder_dst->type != AST_VAR) {
+            log_error(remainder_dst->file, remainder_dst->ln, remainder_dst->col);
+            fprintf(stderr, "remainder value isn't a storage value\n");
+            show_error(remainder_dst->file, remainder_dst->ln, remainder_dst->col);
+            delete_ast(remainder_dst);
+        } else {
+            // Two arithmetics in one, can't return this, so we have to push a MODULUS AST.
+            AST *remainder = create_ast(AST_ARITHMETIC, remainder_dst->ln, remainder_dst->col);
+            remainder->arithmetic.right = remainder_dst;
+            remainder->arithmetic.dst = remainder_dst;
+            remainder->arithmetic.left = value;
+            remainder->arithmetic.name = mystrdup("REMAINDER");
+            remainder->arithmetic.cloned_left = true;
+            remainder->arithmetic.implicit_giving = true;
+            astlist_push(root_ptr, remainder);
+        }
+    }
+
+    AST *ast = create_ast(AST_ARITHMETIC, ln, col);
+    ast->arithmetic.left = value;
+    ast->arithmetic.name = name;
+    ast->arithmetic.right = right;
+    ast->arithmetic.cloned_left = false;
+
+    if (give == NULL)
+        ast->arithmetic.implicit_giving = true;
+    else {
+        ast->arithmetic.implicit_giving = false;
+        ast->arithmetic.dst = give;
+    }
+
     return ast;
 }
 
@@ -316,34 +435,18 @@ AST *parse_id(Parser *prs) {
         
         if (expect_identifier(prs, "RUN")) {
             eat(prs, TOK_ID);
-            AST *ast = create_ast(AST_INTRINSIC, ln, col);
-            ast->intrinsic.type = INTR_STOP;
-            ast->intrinsic.arg = NOP(ln, col);
-            return ast;
+            return create_ast(AST_STOP, ln, col);
         }
 
         return NOP(ln, col);
     } else if (strcmp(id, "DISPLAY") == 0) {
         free(id);
-
-        if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
-            return NOP(ln, col);
-
-        AST *ast = create_ast(AST_INTRINSIC, ln, col);
-        ast->intrinsic.type = INTR_DISPLAY;
-        ast->intrinsic.arg = parse_value(prs, TYPE_ANY);
-
-        if (ast->intrinsic.arg->type == AST_INT || ast->intrinsic.arg->type == AST_FLOAT) {
-            log_error(ast->file, ast->ln, ast->col);
-            fprintf(stderr, "attempting to display constant number '%s'\n", asttype_to_string(ast->intrinsic.arg->type));
-            show_error(ast->file, ast->ln, ast->col);
-        }
-
-        return ast;
+        return parse_display(prs, ln, col);
     } else if (strcmp(id, "MOVE") == 0) {
         free(id);
         return parse_move(prs, ln, col);
-    }
+    } else if (strcmp(id, "ADD") == 0 || strcmp(id, "SUBTRACT") == 0 || strcmp(id, "MULTIPLY") == 0 || strcmp(id, "DIVIDE") == 0)
+        return parse_arithmetic(prs, id, ln, col);
 
     // User-defined stuff.
     Variable *sym;
@@ -448,6 +551,12 @@ AST *parse_pic(Parser *prs) {
 
             eat_until(prs, TOK_DOT);
             ast->pic.count = 0;
+        } else if (type == TYPE_NUMERIC) {
+            // Currently, we don't care if numbers are just PIC 9 or have a length.
+            // Just ignore it for now.
+            // TODO: This.
+            eat_until(prs, TOK_RPAREN);
+            ast->pic.count = 0;
         } else {
             AST *size = parse_constant(prs);
             ast->pic.count = (unsigned int)size->constant.i64;
@@ -504,6 +613,7 @@ AST *parse_file(char *file) {
 
     AST *root = create_ast(AST_ROOT, 1, 1);
     root->root = create_astlist();
+    root_ptr = &root->root;
 
     while (prs.tok->type != TOK_EOF) {
         AST *stmt = parse_stmt(&prs);
@@ -512,9 +622,11 @@ AST *parse_file(char *file) {
             case AST_NOP:
                 delete_ast(stmt);
                 continue;
-            case AST_INTRINSIC:
+            case AST_STOP:
+            case AST_DISPLAY:
             case AST_PIC:
-            case AST_MOVE: break;
+            case AST_MOVE:
+            case AST_ARITHMETIC: break;
             default:
                 log_error(stmt->file, stmt->ln, stmt->col);
                 fprintf(stderr, "invalid statement '%s'\n", asttype_to_string(stmt->type));

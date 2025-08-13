@@ -31,6 +31,9 @@ void delete_ast(AST *ast) {
         case AST_PROC:
             free(ast->proc);
             break;
+        case AST_DISPLAY:
+            delete_ast(ast->display.value);
+            break;
         case AST_PIC:
             free(ast->pic.name);
             
@@ -41,9 +44,16 @@ void delete_ast(AST *ast) {
             delete_ast(ast->move.dst);
             delete_ast(ast->move.src);
             break;
-        case AST_INTRINSIC:
-            if (ast->intrinsic.arg != NULL)
-                delete_ast(ast->intrinsic.arg);
+        case AST_ARITHMETIC:
+            free(ast->arithmetic.name);
+
+            if (!ast->arithmetic.cloned_left)
+                delete_ast(ast->arithmetic.left);
+
+            delete_ast(ast->arithmetic.right);
+
+            if (!ast->arithmetic.implicit_giving)
+                delete_ast(ast->arithmetic.dst);
             break;
         default: break;
     }
@@ -61,9 +71,11 @@ char *asttype_to_string(ASTType type) {
         case AST_STRING: return "string";
         case AST_VAR: return "variable";
         case AST_PROC: return "procedure";
+        case AST_STOP: return "stop";
+        case AST_DISPLAY: return "display";
         case AST_PIC: return "picture";
         case AST_MOVE: return "move";
-        case AST_INTRINSIC: return "intrinsic";
+        case AST_ARITHMETIC: return "arithmetic";
         default: break;
     }
 

@@ -2,10 +2,11 @@
        PROGRAM-ID. HELLOWORLD.
        DATA DIVISION.
        WORKING-STORAGE SECTION.
-       01  MY-NUMBER PIC 9(2) VALUE 55.
+       01  MY-NUMBER PIC 9(2) VALUE 50.
        01  MY-CHARACTER PIC A VALUE 'X'.
        01  MY-STRING PIC A(32) VALUE "Hello!".
        01  MY-MIXED-STRING PIC X(32) VALUE "ABC123".
+       01  HALF PIC 9.
        PROCEDURE DIVISION.
       * Note that the DISPLAY intrinsic always ends in a new line.
 
@@ -17,5 +18,10 @@
            DISPLAY MY-CHARACTER.
            DISPLAY MY-STRING.
            DISPLAY MY-MIXED-STRING.
+
+      * Displaying variables with variables.
+      * Note that a newline is only printed when the statement is ended.
+           DIVIDE 2 INTO MY-NUMBER GIVING HALF.
+           DISPLAY "Half of " MY-NUMBER " is " HALF.
 
            STOP RUN.
