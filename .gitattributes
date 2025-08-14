@@ -1,2 +1,2 @@
-examples/*.CBL linguist-detectable=true
-examples/*.CBL linguist-language=COBOL
+examples/*.COB linguist-detectable=true
+examples/*.COB linguist-language=cobol
