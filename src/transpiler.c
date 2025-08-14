@@ -32,6 +32,8 @@ char *picturename_to_c(char *name) {
     return copy;
 }
 
+char *emit_stmt(AST *ast);
+
 char *value_to_string(AST *ast) {
     char *string;
 
@@ -45,6 +47,14 @@ char *value_to_string(AST *ast) {
             sprintf(string, "\"%s\"", ast->constant.string);
             return string;
         case AST_VAR: return picturename_to_c(ast->var.name);
+        case AST_MATH: return emit_stmt(ast);
+        case AST_PARENS: {
+            char *value = value_to_string(ast->parens);
+            string = malloc(strlen(value) + 3);
+            sprintf(string, "(%s)", value);
+            free(value);
+            return string;
+        }
         default: break;
     }
 
@@ -159,7 +169,13 @@ char *emit_move(AST *ast) {
 char *emit_arithmetic(AST *ast) {
     char *left = value_to_string(ast->arithmetic.left);
     char *right = value_to_string(ast->arithmetic.right);
-    char *dst = value_to_string(ast->arithmetic.dst);
+    char *dst;
+
+    if (ast->arithmetic.implicit_giving)
+        dst = value_to_string(ast->arithmetic.right);
+    else
+        dst = value_to_string(ast->arithmetic.dst);
+
     char *code = malloc(strlen(left) + strlen(right) + strlen(dst) + 27);
 
     if (strcmp(ast->arithmetic.name, "ADD") == 0)
@@ -179,6 +195,80 @@ char *emit_arithmetic(AST *ast) {
     return code;
 }
 
+char *emit_math(AST *ast) {
+    char *values = malloc(32);
+    values[0] = '\0';
+    size_t values_len = 0;
+    size_t values_cap = 32;
+    bool has_mod = false;
+
+    for (size_t i = 1; i < ast->math.size; i += 2) {
+        if (ast->math.items[i]->oper == TOK_MOD) {
+            has_mod = true;
+            continue;
+        }
+    }
+
+    for (size_t i = 0; i < ast->math.size; i++) {
+        AST *value = ast->math.items[i];
+        char *value_string;
+        
+        if (value->type == AST_OPER) {
+            value_string = malloc(2);
+
+            if (value->oper == TOK_PLUS)
+                strcpy(value_string, "+");
+            else if (value->oper == TOK_MINUS)
+                strcpy(value_string, "-");
+            else if (value->oper == TOK_STAR)
+                strcpy(value_string, "*");
+            else if (value->oper == TOK_SLASH)
+                strcpy(value_string, "/");
+            else {
+                strcpy(value_string, "%");
+                has_mod = true;
+            }
+        } else
+            value_string = value_to_string(value);
+
+        const size_t value_len = strlen(value_string);
+
+        if (values_len + value_len + 15 >= values_cap) {
+            while (values_len + value_len + 15 >= values_cap)
+                values_cap *= 2;
+
+            values = realloc(values, values_cap);
+        }
+
+        if (value->type != AST_OPER && has_mod) {
+            strcat(values, "(long long)");
+            values_len += 12;
+        }
+
+        strcat(values, value_string);
+
+        values_len += value_len;
+        free(value_string);
+
+        if (i != ast->math.size - 1)
+            strcat(values, " ");
+    }
+
+    return values;
+}
+
+char *emit_compute(AST *ast) {
+    char *dst = value_to_string(ast->compute.dst);
+    char *math = value_to_string(ast->compute.math);
+
+    char *values = malloc(strlen(dst) + strlen(math) + 10);
+    sprintf(values, "%s = %s;\n", dst, math);
+
+    free(dst);
+    free(math);
+    return values;
+}
+
 char *emit_stmt(AST *ast) {
     switch (ast->type) {
         case AST_STOP: return emit_stop(ast);
@@ -186,6 +276,8 @@ char *emit_stmt(AST *ast) {
         case AST_PIC: return emit_pic(ast);
         case AST_MOVE: return emit_move(ast);
         case AST_ARITHMETIC: return emit_arithmetic(ast);
+        case AST_COMPUTE: return emit_compute(ast);
+        case AST_MATH: return emit_math(ast);
         default: break;
     }
 

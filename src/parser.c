@@ -15,6 +15,8 @@
 
 #define NOP(ln, col) create_ast(AST_NOP, ln, col)
 
+#define IS_MATH(prs) (prs->tok->type == TOK_PLUS || prs->tok->type == TOK_MINUS || prs->tok->type == TOK_STAR || prs->tok->type == TOK_SLASH || strcmp(prs->tok->value, "MOD") == 0)
+
 #define TABLE_SIZE 1000
 
 static Variable variables[TABLE_SIZE];
@@ -151,7 +153,8 @@ AST *parse_value(Parser *prs, PictureType type) {
         case AST_INT:
         case AST_FLOAT:
         case AST_STRING:
-        case AST_VAR: break;
+        case AST_VAR:
+        case AST_PARENS: break;
         default:
             log_error(value->file, value->ln, value->col);
             fprintf(stderr, "invalid value '%s'\n", asttype_to_string(value->type));
@@ -288,6 +291,9 @@ AST *parse_move(Parser *prs, size_t ln, size_t col) {
 }
 
 AST *parse_arithmetic(Parser *prs, char *name, size_t ln, size_t col) {
+    if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
+        return NOP(ln, col);
+
     // TODO: Probably type this somehow.
     AST *value = parse_value(prs, TYPE_ANY);
 
@@ -316,7 +322,7 @@ AST *parse_arithmetic(Parser *prs, char *name, size_t ln, size_t col) {
     if (strcmp(prs->tok->value, "GIVING") != 0) {
         if (strcmp(name, "MULTIPLY") == 0 || strcmp(name, "DIVIDE") == 0) {
             log_error(prs->file, ln, col);
-            fprintf(stderr, "%s cannot be given implicitly\n", name);
+            fprintf(stderr, "%s must be given implicitly\n", name);
             show_error(prs->file, ln, col);
         }
 
@@ -350,12 +356,22 @@ AST *parse_arithmetic(Parser *prs, char *name, size_t ln, size_t col) {
         } else {
             // Two arithmetics in one, can't return this, so we have to push a MODULUS AST.
             AST *remainder = create_ast(AST_ARITHMETIC, remainder_dst->ln, remainder_dst->col);
-            remainder->arithmetic.right = remainder_dst;
+            remainder->arithmetic.right = right;
             remainder->arithmetic.dst = remainder_dst;
             remainder->arithmetic.left = value;
             remainder->arithmetic.name = mystrdup("REMAINDER");
-            remainder->arithmetic.cloned_left = true;
-            remainder->arithmetic.implicit_giving = true;
+            remainder->arithmetic.cloned_left = remainder->arithmetic.cloned_right = true;
+            remainder->arithmetic.implicit_giving = false;
+
+            if (strcmp(name, "DIVIDE") == 0 && give != NULL && strcmp(right->var.name, remainder_dst->var.name) == 0) {
+                // Doing a modulus into its own variable, don't want to
+                // overrwrite with a division here.
+                remainder->arithmetic.cloned_left = remainder->arithmetic.cloned_right = false;
+                delete_ast(give); // GIVING for the division, not the remainder, don't need it.
+                free(name);
+                return remainder;
+            }
+
             astlist_push(root_ptr, remainder);
         }
     }
@@ -364,7 +380,7 @@ AST *parse_arithmetic(Parser *prs, char *name, size_t ln, size_t col) {
     ast->arithmetic.left = value;
     ast->arithmetic.name = name;
     ast->arithmetic.right = right;
-    ast->arithmetic.cloned_left = false;
+    ast->arithmetic.cloned_left = ast->arithmetic.cloned_right = false;
 
     if (give == NULL)
         ast->arithmetic.implicit_giving = true;
@@ -373,6 +389,55 @@ AST *parse_arithmetic(Parser *prs, char *name, size_t ln, size_t col) {
         ast->arithmetic.dst = give;
     }
 
+    return ast;
+}
+
+AST *parse_math(Parser *prs, AST *first, PictureType type) {
+    if (first == NULL)
+        first = parse_value(prs, TYPE_ANY);
+
+    AST *ast = create_ast(AST_MATH, first->ln, first->col);
+    ast->math = create_astlist();
+    astlist_push(&ast->math, first);
+
+    while (IS_MATH(prs)) {
+        AST *oper = create_ast(AST_OPER, prs->tok->ln, prs->tok->col);
+
+        if (strcmp(prs->tok->value, "MOD") == 0)
+            oper->oper = TOK_MOD;
+        else
+            oper->oper = prs->tok->type;
+
+        eat(prs, prs->tok->type);
+
+        astlist_push(&ast->math, oper);
+        astlist_push(&ast->math, parse_value(prs, type));
+    }
+
+    return ast;
+}
+
+AST *parse_compute(Parser *prs, size_t ln, size_t col) {
+    if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
+        return NOP(ln, col);
+
+    AST *dst = parse_value(prs, TYPE_ANY);
+
+    if (dst->type != AST_VAR) {
+        log_error(dst->file, dst->ln, dst->col);
+        fprintf(stderr, "compute value isn't a storage value\n");
+        show_error(dst->file, dst->ln, dst->col);
+
+        delete_ast(dst);
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    eat(prs, TOK_EQUAL);
+
+    AST *ast = create_ast(AST_COMPUTE, ln, col);
+    ast->compute.dst = dst;
+    ast->compute.math = parse_math(prs, NULL, dst->var.sym->type);
     return ast;
 }
 
@@ -447,6 +512,10 @@ AST *parse_id(Parser *prs) {
         return parse_move(prs, ln, col);
     } else if (strcmp(id, "ADD") == 0 || strcmp(id, "SUBTRACT") == 0 || strcmp(id, "MULTIPLY") == 0 || strcmp(id, "DIVIDE") == 0)
         return parse_arithmetic(prs, id, ln, col);
+    else if (strcmp(id, "COMPUTE") == 0) {
+        free(id);
+        return parse_compute(prs, ln, col);
+    }
 
     // User-defined stuff.
     Variable *sym;
@@ -554,7 +623,7 @@ AST *parse_pic(Parser *prs) {
         } else if (type == TYPE_NUMERIC) {
             // Currently, we don't care if numbers are just PIC 9 or have a length.
             // Just ignore it for now.
-            // TODO: This.
+            // TODO: This maybe.
             eat_until(prs, TOK_RPAREN);
             ast->pic.count = 0;
         } else {
@@ -577,6 +646,18 @@ AST *parse_pic(Parser *prs) {
     return ast;
 }
 
+AST *parse_parens(Parser *prs) {
+    AST *ast = create_ast(AST_PARENS, prs->tok->ln, prs->tok->col);
+    eat(prs, TOK_LPAREN);
+    ast->parens = parse_value(prs, TYPE_ANY);
+
+    if (IS_MATH(prs))
+        ast->parens = parse_math(prs, ast->parens, TYPE_NUMERIC);
+
+    eat(prs, TOK_RPAREN);
+    return ast;
+}
+
 AST *parse_stmt(Parser *prs) {
     while (prs->tok->type == TOK_DOT)
         eat(prs, TOK_DOT);
@@ -593,6 +674,7 @@ AST *parse_stmt(Parser *prs) {
             __attribute__((fallthrough));
         case TOK_FLOAT:
         case TOK_STRING: return parse_constant(prs);
+        case TOK_LPAREN: return parse_parens(prs);
         default: break;
     }
 
@@ -600,10 +682,7 @@ AST *parse_stmt(Parser *prs) {
     fprintf(stderr, "invalid statement '%s'\n", tokentype_to_string(prs->tok->type));
     show_error(prs->file, prs->tok->ln, prs->tok->col);
 
-    // Next statement.
-    eat_until(prs, TOK_DOT);
-    eat(prs, TOK_DOT);
-
+    eat_until(prs, TOK_DOT); // Next statement.
     return NOP(prs->tok->ln, prs->tok->col);
 }
 
@@ -626,7 +705,8 @@ AST *parse_file(char *file) {
             case AST_DISPLAY:
             case AST_PIC:
             case AST_MOVE:
-            case AST_ARITHMETIC: break;
+            case AST_ARITHMETIC:
+            case AST_COMPUTE: break;
             default:
                 log_error(stmt->file, stmt->ln, stmt->col);
                 fprintf(stderr, "invalid statement '%s'\n", asttype_to_string(stmt->type));

@@ -402,7 +402,7 @@ Token lex_next_token(Lexer *lex) {
     while (isspace(lex->cur))
         step(lex);
 
-    if (lex->cur == '*' || lex->cur == '/') {
+    if ((lex->cur == '*' || lex->cur == '/') && lex->col == 7) {
         while (lex->cur != '\0' && lex->cur != '\n')
             step(lex);
 
@@ -421,6 +421,11 @@ Token lex_next_token(Lexer *lex) {
         case '(': return create_and_step(lex, TOK_LPAREN, "(");
         case ')': return create_and_step(lex, TOK_RPAREN, ")");
         case '.': return create_and_step(lex, TOK_DOT, ".");
+        case '+': return create_and_step(lex, TOK_PLUS, "+");
+        case '-': return create_and_step(lex, TOK_MINUS, "-");
+        case '*': return create_and_step(lex, TOK_STAR, "*");
+        case '/': return create_and_step(lex, TOK_SLASH, "/");
+        case '=': return create_and_step(lex, TOK_EQUAL, "=");
         default: break;
     }
 

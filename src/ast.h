@@ -33,7 +33,11 @@ typedef enum {
     AST_DISPLAY,
     AST_PIC,
     AST_MOVE,
-    AST_ARITHMETIC
+    AST_ARITHMETIC,
+    AST_OPER,
+    AST_COMPUTE,
+    AST_MATH,
+    AST_PARENS
 } ASTType;
 
 typedef struct AST AST;
@@ -91,7 +95,18 @@ typedef struct AST {
             AST *dst;
             bool implicit_giving;
             bool cloned_left;
+            bool cloned_right;
         } arithmetic;
+
+        TokenType oper;
+
+        struct {
+            AST *dst;
+            AST *math;
+        } compute;
+
+        ASTList math;
+        AST *parens;
     };
 } AST;
 

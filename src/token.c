@@ -23,6 +23,12 @@ char *tokentype_to_string(TokenType type) {
         case TOK_LPAREN: return "lparen";
         case TOK_RPAREN: return "rparen";
         case TOK_DOT: return "dot";
+        case TOK_PLUS: return "plus";
+        case TOK_MINUS: return "minus";
+        case TOK_STAR: return "star";
+        case TOK_SLASH: return "slash";
+        case TOK_MOD: return "mod";
+        case TOK_EQUAL: return "equal";
         default: break;
     }
 

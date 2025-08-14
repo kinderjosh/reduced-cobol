@@ -45,15 +45,26 @@ void delete_ast(AST *ast) {
             delete_ast(ast->move.src);
             break;
         case AST_ARITHMETIC:
-            free(ast->arithmetic.name);
-
             if (!ast->arithmetic.cloned_left)
                 delete_ast(ast->arithmetic.left);
 
-            delete_ast(ast->arithmetic.right);
+            if (!ast->arithmetic.cloned_right)
+                delete_ast(ast->arithmetic.right);
 
-            if (!ast->arithmetic.implicit_giving)
+            if (!ast->arithmetic.implicit_giving || strcmp(ast->arithmetic.name, "REMAINDER") == 0)
                 delete_ast(ast->arithmetic.dst);
+
+            free(ast->arithmetic.name);
+            break;
+        case AST_COMPUTE:
+            delete_ast(ast->compute.dst);
+            delete_ast(ast->compute.math);
+            break;
+        case AST_MATH:
+            delete_astlist(&ast->math);
+            break;
+        case AST_PARENS:
+            delete_ast(ast->parens);
             break;
         default: break;
     }
@@ -76,6 +87,10 @@ char *asttype_to_string(ASTType type) {
         case AST_PIC: return "picture";
         case AST_MOVE: return "move";
         case AST_ARITHMETIC: return "arithmetic";
+        case AST_OPER: return "operator";
+        case AST_COMPUTE: return "compute";
+        case AST_MATH: return "math";
+        case AST_PARENS: return "parentheses";
         default: break;
     }
 
