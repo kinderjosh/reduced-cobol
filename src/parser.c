@@ -15,7 +15,9 @@
 
 #define NOP(ln, col) create_ast(AST_NOP, ln, col)
 
+// I kinda feel guilty for these but like it's the best way...
 #define IS_MATH(prs) (prs->tok->type == TOK_PLUS || prs->tok->type == TOK_MINUS || prs->tok->type == TOK_STAR || prs->tok->type == TOK_SLASH || strcmp(prs->tok->value, "MOD") == 0)
+#define IS_CONDITION(prs) (prs->tok->type == TOK_EQ || prs->tok->type == TOK_EQUAL || prs->tok->type == TOK_NEQ || prs->tok->type == TOK_LT || prs->tok->type == TOK_LTE || prs->tok->type == TOK_GT || prs->tok->type == TOK_GTE || strcmp(prs->tok->value, "IS") == 0 || (strcmp(prs->tok->value, "NOT") == 0 && strcmp(peek(prs, 1)->value, "EQUAL") == 0))
 
 #define TABLE_SIZE 1000
 
@@ -112,6 +114,11 @@ void eat_until(Parser *prs, TokenType type) {
         eat(prs, prs->tok->type);
 }
 
+void jump_to(Parser *prs, size_t pos) {
+    prs->pos = pos;
+    prs->tok = &prs->tokens[pos];
+}
+
 static Token *peek(Parser *prs, int offset) {
     if (prs->pos + offset >= prs->token_count)
         return &prs->tokens[prs->token_count - 1];
@@ -154,7 +161,8 @@ AST *parse_value(Parser *prs, PictureType type) {
         case AST_FLOAT:
         case AST_STRING:
         case AST_VAR:
-        case AST_PARENS: break;
+        case AST_PARENS:
+        case AST_NOT: break;
         default:
             log_error(value->file, value->ln, value->col);
             fprintf(stderr, "invalid value '%s'\n", asttype_to_string(value->type));
@@ -217,12 +225,42 @@ void parse_section(Parser *prs, char *sect) {
         prs->cur_section = SECT_WORKING_STORAGE;
 }
 
+// TOFIX: I really don't like how gross and builtin this shit is.
+AST *parse_any_no_error(Parser *prs) {
+    if (prs->tok->type == TOK_INT || prs->tok->type == TOK_FLOAT || prs->tok->type == TOK_STRING)
+        return parse_stmt(prs);
+
+    Variable *var = NULL;
+
+    if ((var = find_variable(prs->file, prs->tok->value))->used) {
+        AST *ast = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
+        ast->var.name = mystrdup(prs->tok->value);
+        ast->var.sym = var;
+        eat(prs, TOK_ID);
+        return ast;
+    }
+
+    //eat(prs, prs->tok->type);
+    return NOP(prs->tok->ln, prs->tok->col);
+}
+
 AST *parse_display(Parser *prs, size_t ln, size_t col) {
     if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
         return NOP(ln, col);
 
+    size_t before = prs->pos;
+    AST *thing = parse_any_no_error(prs);
+    jump_to(prs, before);
+
+    // End of display.
+    if (thing->type != AST_STRING && thing->type != AST_VAR) {
+        delete_ast(thing);
+        return NOP(ln, col);
+    }
+
+    delete_ast(thing);
     AST *ast = create_ast(AST_DISPLAY, ln, col);
-    ast->display.value = parse_value(prs, TYPE_ANY);
+    ast->display.value = parse_stmt(prs);
 
     if (ast->display.value->type == AST_INT || ast->display.value->type == AST_FLOAT) {
         log_error(ast->file, ast->ln, ast->col);
@@ -235,12 +273,27 @@ AST *parse_display(Parser *prs, size_t ln, size_t col) {
         return ast;
     }
 
+    // Sometimes like in IF statements we won't have a . to find,
+    // so we'll just stop when we find an invalid display value.
+    before = prs->pos;
+    AST *next = parse_any_no_error(prs);
+
+    if (next->type != AST_STRING && next->type != AST_VAR) {
+        // Invalid thing, stop.
+        jump_to(prs, before);
+        delete_ast(next);
+        ast->display.add_newline = true;
+        return ast;
+    }
+
     // String concatenation going on here, we need to print the original string first.
     ast->display.add_newline = false;
     astlist_push(root_ptr, ast);
 
-    // Let's just be quirky and use recursion.
-    return parse_display(prs, prs->tok->ln, prs->tok->col);
+    AST *bruh = create_ast(AST_DISPLAY, next->ln, next->col);
+    bruh->display.value = next;
+    bruh->display.add_newline = true;
+    return bruh;
 }
 
 AST *parse_move(Parser *prs, size_t ln, size_t col) {
@@ -417,6 +470,142 @@ AST *parse_math(Parser *prs, AST *first, PictureType type) {
     return ast;
 }
 
+AST *parse_oper(Parser *prs) {
+    AST *oper = create_ast(AST_OPER, prs->tok->ln, prs->tok->col);
+    oper->oper = TOK_EQ; // Fallback.
+
+    if (strcmp(prs->tok->value, "IS") == 0) {
+        eat(prs, TOK_ID);
+
+        if (strcmp(prs->tok->value, "EQUAL") == 0) {
+            oper->oper = TOK_EQ;
+            eat(prs, TOK_ID);
+
+            if (strcmp(prs->tok->value, "TO") != 0) {
+                log_error(prs->file, prs->tok->ln, prs->tok->col);
+                fprintf(stderr, "expected identifier 'TO' following 'EQUAL'\n");
+                show_error(prs->file, prs->tok->ln, prs->tok->col);
+                return oper;
+            }
+
+            eat(prs, TOK_ID);
+        } else if (strcmp(prs->tok->value, "LESS") == 0) {
+            eat(prs, TOK_ID);
+
+            if (strcmp(prs->tok->value, "THAN") != 0) {
+                log_error(prs->file, prs->tok->ln, prs->tok->col);
+                fprintf(stderr, "expected identifier 'THAN' following 'LESS'\n");
+                show_error(prs->file, prs->tok->ln, prs->tok->col);
+                return oper;
+            }
+
+            eat(prs, TOK_ID);
+
+            if (strcmp(prs->tok->value, "OR") != 0) {
+                oper->oper = TOK_LT;
+                return oper;
+            }
+
+            eat(prs, TOK_ID);
+
+            if (strcmp(prs->tok->value, "EQUAL") != 0) {
+                log_error(prs->file, prs->tok->ln, prs->tok->col);
+                fprintf(stderr, "expected identifier 'EQUAL' following 'OR'\n");
+                show_error(prs->file, prs->tok->ln, prs->tok->col);
+                return oper;
+            }
+
+            eat(prs, TOK_ID);
+
+            if (strcmp(prs->tok->value, "TO") != 0) {
+                log_error(prs->file, prs->tok->ln, prs->tok->col);
+                fprintf(stderr, "expected identifier 'TO' following 'EQUAL'\n");
+                show_error(prs->file, prs->tok->ln, prs->tok->col);
+            } else {
+                oper->oper = TOK_LTE;
+                eat(prs, TOK_ID);
+            }
+        } else if (strcmp(prs->tok->value, "GREATER") == 0) {
+            eat(prs, TOK_ID);
+
+            if (strcmp(prs->tok->value, "THAN") != 0) {
+                log_error(prs->file, prs->tok->ln, prs->tok->col);
+                fprintf(stderr, "expected identifier 'THAN' following 'GREATER'\n");
+                show_error(prs->file, prs->tok->ln, prs->tok->col);
+                return oper;
+            }
+
+            eat(prs, TOK_ID);
+
+            if (strcmp(prs->tok->value, "OR") != 0) {
+                oper->oper = TOK_GT;
+                return oper;
+            }
+
+            eat(prs, TOK_ID);
+
+            if (strcmp(prs->tok->value, "EQUAL") != 0) {
+                log_error(prs->file, prs->tok->ln, prs->tok->col);
+                fprintf(stderr, "expected identifier 'EQUAL' following 'OR'\n");
+                show_error(prs->file, prs->tok->ln, prs->tok->col);
+                return oper;
+            }
+
+            eat(prs, TOK_ID);
+
+            if (strcmp(prs->tok->value, "TO") != 0) {
+                log_error(prs->file, prs->tok->ln, prs->tok->col);
+                fprintf(stderr, "expected identifier 'TO' following 'EQUAL'\n");
+                show_error(prs->file, prs->tok->ln, prs->tok->col);
+            } else {
+                oper->oper = TOK_GTE;
+                eat(prs, TOK_ID);
+            }
+        }
+    } else if (strcmp(prs->tok->value, "NOT") == 0) {
+        eat(prs, TOK_ID);
+
+        if (strcmp(prs->tok->value, "EQUAL") != 0) {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "expected identifier 'EQUAL' following 'NOT'\n");
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+            return oper;
+        }
+
+        eat(prs, TOK_ID);
+
+        if (strcmp(prs->tok->value, "TO") != 0) {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "expected identifier 'TO' following 'EQUAL'\n");
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+        } else {
+            eat(prs, TOK_ID);
+            oper->oper = TOK_NEQ;
+        }
+    } else {
+        oper->oper = prs->tok->type;
+        eat(prs, prs->tok->type);
+    }
+
+    return oper;
+}
+
+AST *parse_condition(Parser *prs, AST *first) {
+    if (first == NULL)
+        first = parse_value(prs, TYPE_ANY);
+
+    AST *ast = create_ast(AST_CONDITION, first->ln, first->col);
+    ast->condition = create_astlist();
+    astlist_push(&ast->condition, first);
+
+    while (IS_CONDITION(prs)) {
+        astlist_push(&ast->condition, parse_oper(prs));
+        astlist_push(&ast->condition, parse_value(prs, TYPE_ANY));
+    }
+
+    return ast;
+}
+
 AST *parse_compute(Parser *prs, size_t ln, size_t col) {
     if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
         return NOP(ln, col);
@@ -438,6 +627,79 @@ AST *parse_compute(Parser *prs, size_t ln, size_t col) {
     AST *ast = create_ast(AST_COMPUTE, ln, col);
     ast->compute.dst = dst;
     ast->compute.math = parse_math(prs, NULL, dst->var.sym->type);
+    return ast;
+}
+
+// false = deleted
+bool validate_stmt(AST *stmt) {
+    switch (stmt->type) {
+        case AST_NOP:
+            delete_ast(stmt);
+            return false;
+        case AST_STOP:
+        case AST_DISPLAY:
+        case AST_PIC:
+        case AST_MOVE:
+        case AST_ARITHMETIC:
+        case AST_COMPUTE:
+        case AST_IF: break;
+        default:
+            log_error(stmt->file, stmt->ln, stmt->col);
+            fprintf(stderr, "invalid statement '%s'\n", asttype_to_string(stmt->type));
+            show_error(stmt->file, stmt->ln, stmt->col);
+            break;
+    }
+    
+    return true;
+}
+
+AST *parse_if(Parser *prs, size_t ln, size_t col) {
+    AST *condition = parse_condition(prs, NULL);
+
+    if (!expect_identifier(prs, "THEN")) {
+        delete_ast(condition);
+        return NOP(ln, col);
+    }
+
+    eat(prs, TOK_ID);
+    ASTList body = create_astlist();
+
+    while (prs->tok->type != TOK_EOF && strcmp(prs->tok->value, "END-IF") != 0 && strcmp(prs->tok->value, "ELSE") != 0) {
+        AST *stmt = parse_stmt(prs);
+
+        if (validate_stmt(stmt))
+            astlist_push(&body, stmt);
+    }
+
+    AST *ast = create_ast(AST_IF, ln, col);
+    ast->if_stmt.condition = condition;
+    ast->if_stmt.body = body;
+    ast->if_stmt.else_body = create_astlist();
+
+    if (strcmp(prs->tok->value, "END-IF") == 0) {
+        eat(prs, TOK_ID);
+        return ast;
+    } else if (strcmp(prs->tok->value, "ELSE") != 0)
+        return ast;
+
+    eat(prs, TOK_ID);
+
+    while (prs->tok->type != TOK_EOF && strcmp(prs->tok->value, "END-IF") != 0) {
+        AST *stmt = parse_stmt(prs);
+
+        if (validate_stmt(stmt))
+            astlist_push(&ast->if_stmt.else_body, stmt);
+    }
+
+    if (expect_identifier(prs, "END-IF"))
+        eat(prs, TOK_ID);
+
+    return ast;
+}
+
+AST *parse_not(Parser *prs, size_t ln, size_t col) {
+    AST *ast = create_ast(AST_NOT, ln, col);
+    ast->not_value = parse_value(prs, TYPE_ANY);
     return ast;
 }
 
@@ -515,6 +777,12 @@ AST *parse_id(Parser *prs) {
     else if (strcmp(id, "COMPUTE") == 0) {
         free(id);
         return parse_compute(prs, ln, col);
+    } else if (strcmp(id, "IF") == 0) {
+        free(id);
+        return parse_if(prs, ln, col);
+    } else if (strcmp(id, "NOT") == 0) {
+        free(id);
+        return parse_not(prs, ln, col);
     }
 
     // User-defined stuff.
@@ -653,6 +921,8 @@ AST *parse_parens(Parser *prs) {
 
     if (IS_MATH(prs))
         ast->parens = parse_math(prs, ast->parens, TYPE_NUMERIC);
+    else if (IS_CONDITION(prs))
+        ast->parens = parse_condition(prs, ast->parens);
 
     eat(prs, TOK_RPAREN);
     return ast;
@@ -697,24 +967,8 @@ AST *parse_file(char *file) {
     while (prs.tok->type != TOK_EOF) {
         AST *stmt = parse_stmt(&prs);
 
-        switch (stmt->type) {
-            case AST_NOP:
-                delete_ast(stmt);
-                continue;
-            case AST_STOP:
-            case AST_DISPLAY:
-            case AST_PIC:
-            case AST_MOVE:
-            case AST_ARITHMETIC:
-            case AST_COMPUTE: break;
-            default:
-                log_error(stmt->file, stmt->ln, stmt->col);
-                fprintf(stderr, "invalid statement '%s'\n", asttype_to_string(stmt->type));
-                show_error(stmt->file, stmt->ln, stmt->col);
-                break;
-        }
-
-        astlist_push(&root->root, stmt);
+        if (validate_stmt(stmt))
+            astlist_push(&root->root, stmt);
     }
 
     if (prs.cur_program == NULL) {

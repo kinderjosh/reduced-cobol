@@ -29,6 +29,12 @@ char *tokentype_to_string(TokenType type) {
         case TOK_SLASH: return "slash";
         case TOK_MOD: return "mod";
         case TOK_EQUAL: return "equal";
+        case TOK_EQ: return "logical equal";
+        case TOK_NEQ: return "logical not equal";
+        case TOK_LT: return "less than";
+        case TOK_LTE: return "less than or equal";
+        case TOK_GT: return "greater than";
+        case TOK_GTE: return "greater than or equal";
         default: break;
     }
 

@@ -18,7 +18,13 @@ typedef enum {
     TOK_STAR,
     TOK_SLASH,
     TOK_MOD,
-    TOK_EQUAL
+    TOK_EQUAL,
+    TOK_EQ,
+    TOK_NEQ,
+    TOK_LT,
+    TOK_LTE,
+    TOK_GT,
+    TOK_GTE
 } TokenType;
 
 typedef struct {

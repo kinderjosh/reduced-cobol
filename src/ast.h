@@ -37,7 +37,10 @@ typedef enum {
     AST_OPER,
     AST_COMPUTE,
     AST_MATH,
-    AST_PARENS
+    AST_PARENS,
+    AST_CONDITION,
+    AST_IF,
+    AST_NOT
 } ASTType;
 
 typedef struct AST AST;
@@ -107,6 +110,15 @@ typedef struct AST {
 
         ASTList math;
         AST *parens;
+        ASTList condition;
+
+        struct {
+            AST *condition;
+            ASTList body;
+            ASTList else_body;
+        } if_stmt;
+
+        AST *not_value;
     };
 } AST;
 

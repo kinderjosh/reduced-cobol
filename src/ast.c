@@ -66,6 +66,17 @@ void delete_ast(AST *ast) {
         case AST_PARENS:
             delete_ast(ast->parens);
             break;
+        case AST_CONDITION:
+            delete_astlist(&ast->condition);
+            break;
+        case AST_IF:
+            delete_ast(ast->if_stmt.condition);
+            delete_astlist(&ast->if_stmt.body);
+            delete_astlist(&ast->if_stmt.else_body);
+            break;
+        case AST_NOT:
+            delete_ast(ast->not_value);
+            break;
         default: break;
     }
 
@@ -91,6 +102,9 @@ char *asttype_to_string(ASTType type) {
         case AST_COMPUTE: return "compute";
         case AST_MATH: return "math";
         case AST_PARENS: return "parentheses";
+        case AST_CONDITION: return "condition";
+        case AST_IF: return "if";
+        case AST_NOT: return "not";
         default: break;
     }
 

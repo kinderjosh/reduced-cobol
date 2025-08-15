@@ -426,6 +426,18 @@ Token lex_next_token(Lexer *lex) {
         case '*': return create_and_step(lex, TOK_STAR, "*");
         case '/': return create_and_step(lex, TOK_SLASH, "/");
         case '=': return create_and_step(lex, TOK_EQUAL, "=");
+        case '<':
+            if (peek(lex, 1) == '=')
+                return create_and_step(lex, TOK_LTE, "<=");
+            else if (peek(lex, 1) == '>')
+                return create_and_step(lex, TOK_NEQ, "<>");
+
+            return create_and_step(lex, TOK_LT, "<");
+        case '>':
+            if (peek(lex, 1) == '=')
+                return create_and_step(lex, TOK_GTE, ">=");
+
+            return create_and_step(lex, TOK_GT, ">");
         default: break;
     }
 

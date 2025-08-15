@@ -38,6 +38,9 @@ char *value_to_string(AST *ast) {
     char *string;
 
     switch (ast->type) {
+        case AST_NOP:
+            assert(false && "got a nop");
+            return calloc(1, sizeof(char));
         case AST_INT:
             string = malloc(32);
             sprintf(string, "%" PRId64, ast->constant.i64);
@@ -47,7 +50,6 @@ char *value_to_string(AST *ast) {
             sprintf(string, "\"%s\"", ast->constant.string);
             return string;
         case AST_VAR: return picturename_to_c(ast->var.name);
-        case AST_MATH: return emit_stmt(ast);
         case AST_PARENS: {
             char *value = value_to_string(ast->parens);
             string = malloc(strlen(value) + 3);
@@ -55,6 +57,9 @@ char *value_to_string(AST *ast) {
             free(value);
             return string;
         }
+        case AST_MATH:
+        case AST_CONDITION:
+        case AST_NOT: return emit_stmt(ast);
         default: break;
     }
 
@@ -63,6 +68,31 @@ char *value_to_string(AST *ast) {
 }
 
 char *emit_stmt(AST *ast);
+
+char *emit_list(ASTList *list) {
+    char *code = malloc(1024);
+    code[0] = '\0';
+    size_t len = 0;
+    size_t cap = 1024;
+
+    for (size_t i = 0; i < list->size; i++) {
+        char *stmt = emit_stmt(list->items[i]);
+        const size_t stmt_len = strlen(stmt);
+
+        if (len + stmt_len + 1 >= cap) {
+            while (len + stmt_len + 1 >= cap)
+                cap *= 2;
+
+            code = realloc(code, cap);
+        }
+
+        strcat(code, stmt);
+        free(stmt);
+        len += stmt_len;
+    }
+
+    return code;
+}
 
 char *emit_root(AST *root) {
     char *code = malloc(1024);
@@ -269,6 +299,83 @@ char *emit_compute(AST *ast) {
     return values;
 }
 
+char *emit_condition(AST *ast) {
+    char *values = malloc(32);
+    values[0] = '\0';
+    size_t values_len = 0;
+    size_t values_cap = 32;
+
+    for (size_t i = 0; i < ast->condition.size; i++) {
+        AST *value = ast->condition.items[i];
+        char *value_string;
+        
+        if (value->type == AST_OPER) {
+            value_string = malloc(3);
+
+            if (value->oper == TOK_EQ)
+                strcpy(value_string, "==");
+            else if (value->oper == TOK_NEQ)
+                strcpy(value_string, "!=");
+            else if (value->oper == TOK_LT)
+                strcpy(value_string, "<");
+            else if (value->oper == TOK_LTE)
+                strcpy(value_string, "<=");
+            else if (value->oper == TOK_GT)
+                strcpy(value_string, ">");
+            else
+                strcpy(value_string, ">=");
+        } else
+            value_string = value_to_string(value);
+
+        const size_t value_len = strlen(value_string);
+
+        if (values_len + value_len + 15 >= values_cap) {
+            while (values_len + value_len + 15 >= values_cap)
+                values_cap *= 2;
+
+            values = realloc(values, values_cap);
+        }
+
+        strcat(values, value_string);
+
+        values_len += value_len;
+        free(value_string);
+
+        if (i != ast->math.size - 1)
+            strcat(values, " ");
+    }
+
+    return values;
+}
+
+char *emit_if(AST *ast) {
+    char *condition = emit_condition(ast->if_stmt.condition);
+    char *body = emit_list(&ast->if_stmt.body);
+    char *code;
+    
+    if (ast->if_stmt.else_body.size > 0) {
+        char *else_body = emit_list(&ast->if_stmt.else_body);
+        code = malloc(strlen(condition) + strlen(body) + strlen(else_body) + 27);
+        sprintf(code, "if (%s) {\n%s\n} else {\n%s}\n", condition, body, else_body);
+        free(else_body);
+    } else {
+        code = malloc(strlen(condition) + strlen(body) + 15);
+        sprintf(code, "if (%s) {\n%s}\n", condition, body);
+    }
+
+    free(body);
+    free(condition);
+    return code;
+}
+
+char *emit_not(AST *ast) {
+    char *value = value_to_string(ast->not_value);
+    char *code = malloc(strlen(value) + 4);
+    sprintf(code, "!(%s)", value);
+    free(value);
+    return code;
+}
+
 char *emit_stmt(AST *ast) {
     switch (ast->type) {
         case AST_STOP: return emit_stop(ast);
@@ -278,6 +385,9 @@ char *emit_stmt(AST *ast) {
         case AST_ARITHMETIC: return emit_arithmetic(ast);
         case AST_COMPUTE: return emit_compute(ast);
         case AST_MATH: return emit_math(ast);
+        case AST_IF: return emit_if(ast);
+        case AST_CONDITION: return emit_condition(ast);
+        case AST_NOT: return emit_not(ast);
         default: break;
     }
 
