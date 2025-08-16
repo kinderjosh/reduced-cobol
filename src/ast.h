@@ -19,6 +19,7 @@ typedef struct {
     PictureType type;
     unsigned int count;
     bool used;
+    bool is_label;
 } Variable;
 
 typedef enum {
@@ -28,7 +29,6 @@ typedef enum {
     AST_FLOAT,
     AST_STRING,
     AST_VAR,
-    AST_PROC,
     AST_STOP,
     AST_DISPLAY,
     AST_PIC,
@@ -40,7 +40,10 @@ typedef enum {
     AST_PARENS,
     AST_CONDITION,
     AST_IF,
-    AST_NOT
+    AST_NOT,
+    AST_LABEL,
+    AST_PERFORM,
+    AST_PROC
 } ASTType;
 
 typedef struct AST AST;
@@ -65,8 +68,6 @@ typedef struct AST {
             double f64;
             char *string;
         } constant;
-
-        char *proc;
 
         struct {
             char *name;
@@ -119,6 +120,13 @@ typedef struct AST {
         } if_stmt;
 
         AST *not_value;
+        char *label;
+        AST *perform;
+
+        struct {
+            char *name;
+            ASTList body;
+        } proc;
     };
 } AST;
 

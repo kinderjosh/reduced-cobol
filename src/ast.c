@@ -28,9 +28,6 @@ void delete_ast(AST *ast) {
         case AST_VAR:
             free(ast->var.name);
             break;
-        case AST_PROC:
-            free(ast->proc);
-            break;
         case AST_DISPLAY:
             delete_ast(ast->display.value);
             break;
@@ -77,6 +74,16 @@ void delete_ast(AST *ast) {
         case AST_NOT:
             delete_ast(ast->not_value);
             break;
+        case AST_LABEL:
+            free(ast->label);
+            break;
+        case AST_PERFORM:
+            delete_ast(ast->perform);
+            break;
+        case AST_PROC:
+            free(ast->proc.name);
+            delete_astlist(&ast->proc.body);
+            break;
         default: break;
     }
 
@@ -92,7 +99,6 @@ char *asttype_to_string(ASTType type) {
         case AST_FLOAT: return "float";
         case AST_STRING: return "string";
         case AST_VAR: return "variable";
-        case AST_PROC: return "procedure";
         case AST_STOP: return "stop";
         case AST_DISPLAY: return "display";
         case AST_PIC: return "picture";
@@ -105,6 +111,9 @@ char *asttype_to_string(ASTType type) {
         case AST_CONDITION: return "condition";
         case AST_IF: return "if";
         case AST_NOT: return "not";
+        case AST_LABEL: return "label";
+        case AST_PERFORM: return "perform";
+        case AST_PROC: return "procedure";
         default: break;
     }
 

@@ -54,14 +54,15 @@ bool variable_exists(char *file, char *name) {
     return find_variable(file, name)->used;
 }
 
-void add_variable(char *file, char *name, PictureType type, unsigned int count) {
+Variable *add_variable(char *file, char *name, PictureType type, unsigned int count) {
     Variable *var = find_variable(file, name);
     assert(!var->used);
-    var->file = file;
+    var->file = file; // Wrong but who cares TOFIX
     var->name = name;
     var->type = type;
     var->count = count;
     var->used = true;
+    return var;
 }
 
 Parser create_parser(char *file) {
@@ -162,7 +163,8 @@ AST *parse_value(Parser *prs, PictureType type) {
         case AST_STRING:
         case AST_VAR:
         case AST_PARENS:
-        case AST_NOT: break;
+        case AST_NOT:
+        case AST_LABEL: break;
         default:
             log_error(value->file, value->ln, value->col);
             fprintf(stderr, "invalid value '%s'\n", asttype_to_string(value->type));
@@ -642,7 +644,10 @@ bool validate_stmt(AST *stmt) {
         case AST_MOVE:
         case AST_ARITHMETIC:
         case AST_COMPUTE:
-        case AST_IF: break;
+        case AST_IF:
+        case AST_LABEL:
+        case AST_PERFORM:
+        case AST_PROC: break;
         default:
             log_error(stmt->file, stmt->ln, stmt->col);
             fprintf(stderr, "invalid statement '%s'\n", asttype_to_string(stmt->type));
@@ -654,6 +659,9 @@ bool validate_stmt(AST *stmt) {
 }
 
 AST *parse_if(Parser *prs, size_t ln, size_t col) {
+    if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
+        return NOP(ln, col);
+
     AST *condition = parse_condition(prs, NULL);
 
     if (!expect_identifier(prs, "THEN")) {
@@ -698,8 +706,82 @@ AST *parse_if(Parser *prs, size_t ln, size_t col) {
 }
 
 AST *parse_not(Parser *prs, size_t ln, size_t col) {
+    if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
+        return NOP(ln, col);
+
     AST *ast = create_ast(AST_NOT, ln, col);
     ast->not_value = parse_value(prs, TYPE_ANY);
+    return ast;
+}
+
+/*
+AST *parse_goto(Parser *prs, size_t ln, size_t col) {
+    if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
+        return NOP(ln, col);
+
+    if (!expect_identifier(prs, "TO"))
+        return NOP(ln, col);
+
+    eat(prs, TOK_ID);
+
+    if (prs->tok->type != TOK_ID) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "expected label name but found '%s'\n", tokentype_to_string(prs->tok->type));
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    // We don't want to check if this label exists yet, as we want to
+    // be able to jump forwards before a label is defined.
+    // We make sure all labels are checked and resolved after compilation
+    // in resolve_labels().
+
+    AST  *ast = create_ast(AST_GOTO, ln, col);
+    ast->go = create_ast(AST_LABEL, prs->tok->ln, prs->tok->col);
+    ast->go->label = mystrdup(prs->tok->value);
+    eat(prs, TOK_ID);
+    return ast;
+}
+*/
+
+AST *parse_perform(Parser *prs, size_t ln, size_t col) {
+    if (prs->tok->type != TOK_ID) {
+        log_error(prs->file, ln, col);
+        fprintf(stderr, "expected procedure name but found '%s'\n", tokentype_to_string(prs->tok->type));
+        show_error(prs->file, ln, col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    // Assume this label exists, gets validated in validate_labels().
+    AST *ast = create_ast(AST_PERFORM, ln, col);
+    ast->perform = create_ast(AST_LABEL, prs->tok->ln, prs->tok->col);
+    ast->perform->label = mystrdup(prs->tok->value);
+    eat(prs, TOK_ID);
+    return ast;
+}
+
+AST *parse_procedure(Parser *prs, char *name, size_t ln, size_t col) {
+    add_variable(prs->file, name, TYPE_ANY, 0)->is_label = true;
+
+    AST *ast = create_ast(AST_PROC, ln, col);
+    ast->proc.name = name;
+    ast->proc.body = create_astlist();
+
+    while (prs->tok->type != TOK_EOF) {
+        // New procedure or end of program.
+        if (prs->tok->type == TOK_ID && (peek(prs, 1)->type == TOK_DOT || strcmp(prs->tok->value, "END") == 0))
+            break;
+
+        AST *stmt = parse_stmt(prs);
+
+        if (validate_stmt(stmt))
+            astlist_push(&ast->proc.body, stmt);
+    }
+
     return ast;
 }
 
@@ -783,17 +865,42 @@ AST *parse_id(Parser *prs) {
     } else if (strcmp(id, "NOT") == 0) {
         free(id);
         return parse_not(prs, ln, col);
+    //} else if (strcmp(id, "GO") == 0) {
+      //  free(id);
+        //return parse_goto(prs, ln, col);
+    } else if (strcmp(id, "END") == 0) {
+        free(id);
+
+        if (!expect_identifier(prs, "PROGRAM"))
+            return NOP(ln, col);
+
+        eat(prs, TOK_ID);
+
+        if (expect_identifier(prs, prs->cur_program))
+            eat(prs, TOK_ID);
+
+        return NOP(ln, col);
+    } else if (strcmp(id, "PERFORM") == 0) {
+        free(id);
+        return parse_perform(prs, ln, col);
     }
 
     // User-defined stuff.
     Variable *sym;
 
     if ((sym = find_variable(prs->file, id))->used) {
+        if (sym->is_label) {
+            AST *ast = create_ast(AST_LABEL, ln, col);
+            ast->label = id;
+            return ast;
+        }
+
         AST *ast = create_ast(AST_VAR, ln, col);
         ast->var.name = id;
         ast->var.sym = sym;
         return ast;
-    }
+    } else if (prs->cur_division == DIV_PROCEDURE && prs->tok->type == TOK_DOT)
+        return parse_procedure(prs, id, ln, col);
 
     log_error(prs->file, ln, col);
     fprintf(stderr, "undefined identifier '%s'\n", id);

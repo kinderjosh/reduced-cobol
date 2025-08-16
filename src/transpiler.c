@@ -9,6 +9,18 @@
 #include <stdint.h>
 #include <inttypes.h>
 
+static char *globals;
+static size_t globals_len;
+static size_t globals_cap;
+
+static char *functions;
+static size_t functions_len;
+static size_t functions_cap;
+
+static char *function_predefs;
+static size_t function_predefs_len;
+static size_t function_predefs_cap;
+
 char *picturetype_to_c(PictureType type) {
     return type == TYPE_NUMERIC ? "double" : "char";
 }
@@ -57,6 +69,10 @@ char *value_to_string(AST *ast) {
             free(value);
             return string;
         }
+        case AST_LABEL:
+            string = malloc(strlen(ast->label) + 2);
+            sprintf(string, "_%s", ast->label);
+            return string;
         case AST_MATH:
         case AST_CONDITION:
         case AST_NOT: return emit_stmt(ast);
@@ -65,6 +81,48 @@ char *value_to_string(AST *ast) {
 
     assert(false);
     return calloc(1, sizeof(char));
+}
+
+void append_global(char *global) {
+    const size_t len = strlen(global);
+
+    if (globals_len + len + 1 >= globals_cap) {
+        while (globals_len + len + 1 >= globals_cap)
+            globals_cap *= 2;
+
+        globals = realloc(globals, globals_cap);
+    }
+
+    strcat(globals, global);
+    globals_len += len;
+}
+
+void append_function(char *code) {
+    const size_t len = strlen(code);
+
+    if (functions_len + len + 1 >= functions_cap) {
+        while (functions_len + len + 1 >= functions_cap)
+            functions_cap *= 2;
+
+        functions = realloc(functions, functions_cap);
+    }
+
+    strcat(functions, code);
+    functions_len += len;
+}
+
+void append_function_predef(char *code) {
+    const size_t len = strlen(code);
+
+    if (function_predefs_len + len + 1 >= function_predefs_cap) {
+        while (function_predefs_len + len + 1 >= function_predefs_cap)
+            function_predefs_cap *= 2;
+
+        function_predefs = realloc(function_predefs, function_predefs_cap);
+    }
+
+    strcat(function_predefs, code);
+    function_predefs_len += len;
 }
 
 char *emit_stmt(AST *ast);
@@ -96,10 +154,25 @@ char *emit_list(ASTList *list) {
 
 char *emit_root(AST *root) {
     char *code = malloc(1024);
-    strcpy(code, "#include <stdio.h>\nint main(void) {\n");
+    strcpy(code, "int main(void) {\n");
 
-    size_t len = 37;
+    size_t len = 18;
     size_t cap = 1024;
+
+    globals = malloc(1024);
+    globals[0] = '\0';
+    globals_len = 0;
+    globals_cap = 1024;
+
+    functions = malloc(1024);
+    functions[0] = '\0';
+    functions_len = 0;
+    functions_cap = 1024;
+
+    function_predefs = malloc(1024);
+    function_predefs[0] = '\0';
+    function_predefs_len = 0;
+    function_predefs_cap = 1024;
 
     for (size_t i = 0; i < root->root.size; i++) {
         char *stmt = emit_stmt(root->root.items[i]);
@@ -116,7 +189,15 @@ char *emit_root(AST *root) {
     }
 
     strcat(code, "return 0;\n}\n");
-    return code;
+    len += 13;
+
+    char *total = malloc(len + globals_len + functions_len + function_predefs_len + 28);
+    sprintf(total, "#include <stdio.h>\n%s%s%s%s", globals, function_predefs, functions, code);
+    free(code);
+    free(globals);
+    free(functions);
+    free(function_predefs);
+    return total;
 }
 
 char *emit_stop(AST *ast) {
@@ -183,7 +264,9 @@ char *emit_pic(AST *ast) {
     }
 
     free(name);
-    return code;
+    append_global(code);
+    free(code);
+    return calloc(1, sizeof(char));
 }
 
 char *emit_move(AST *ast) {
@@ -312,7 +395,7 @@ char *emit_condition(AST *ast) {
         if (value->type == AST_OPER) {
             value_string = malloc(3);
 
-            if (value->oper == TOK_EQ)
+            if (value->oper == TOK_EQ || value->oper == TOK_EQUAL)
                 strcpy(value_string, "==");
             else if (value->oper == TOK_NEQ)
                 strcpy(value_string, "!=");
@@ -376,6 +459,43 @@ char *emit_not(AST *ast) {
     return code;
 }
 
+char *emit_label(AST *ast) {
+    char *code = malloc(strlen(ast->label) + 4);
+    sprintf(code, "_%s:\n", ast->label);
+    return code;
+}
+
+/*
+char *emit_goto(AST *ast) {
+    char *label = value_to_string(ast->go);
+    char *code = malloc(strlen(label) + 10);
+    sprintf(code, "goto %s;\n", label);
+    free(label);
+    return code;
+}
+*/
+
+char *emit_perform(AST *ast) {
+    char *label = value_to_string(ast->perform);
+    char *code = malloc(strlen(label) + 7);
+    sprintf(code, "%s();\n", label);
+    free(label);
+    return code;
+}
+
+char *emit_procedure(AST *ast) {
+    char *body = emit_list(&ast->proc.body);
+    char *code = malloc(strlen(ast->proc.name) + strlen(body) + 18);
+    sprintf(code, "void _%s() {\n%s}\n", ast->proc.name, body);
+    free(body);
+    append_function(code);
+
+    sprintf(code, "void _%s();\n", ast->proc.name);
+    append_function_predef(code);
+    free(code);
+    return calloc(1, sizeof(char));
+}
+
 char *emit_stmt(AST *ast) {
     switch (ast->type) {
         case AST_STOP: return emit_stop(ast);
@@ -388,6 +508,10 @@ char *emit_stmt(AST *ast) {
         case AST_IF: return emit_if(ast);
         case AST_CONDITION: return emit_condition(ast);
         case AST_NOT: return emit_not(ast);
+        case AST_LABEL: return emit_label(ast);
+        //case AST_GOTO: return emit_goto(ast);
+        case AST_PERFORM: return emit_perform(ast);
+        case AST_PROC: return emit_procedure(ast);
         default: break;
     }
 
