@@ -43,7 +43,10 @@ typedef enum {
     AST_NOT,
     AST_LABEL,
     AST_PERFORM,
-    AST_PROC
+    AST_PROC,
+    AST_BLOCK,
+    AST_PERFORM_CONDITION,
+    AST_PERFORM_COUNT
 } ASTType;
 
 typedef struct AST AST;
@@ -127,6 +130,18 @@ typedef struct AST {
             char *name;
             ASTList body;
         } proc;
+
+        ASTList block;
+
+        struct {
+            AST *proc;
+            AST *condition;
+        } perform_condition;
+
+        struct {
+            AST *proc;
+            unsigned int times;
+        } perform_count;
     };
 } AST;
 

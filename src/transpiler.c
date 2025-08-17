@@ -69,15 +69,14 @@ char *value_to_string(AST *ast) {
             free(value);
             return string;
         }
-        case AST_LABEL:
-            string = malloc(strlen(ast->label) + 2);
-            sprintf(string, "_%s", ast->label);
-            return string;
+        case AST_LABEL: return picturename_to_c(ast->label);
         case AST_MATH:
         case AST_CONDITION:
         case AST_NOT: return emit_stmt(ast);
         default: break;
     }
+
+    printf(">>>%s\n", asttype_to_string(ast->type));
 
     assert(false);
     return calloc(1, sizeof(char));
@@ -460,8 +459,10 @@ char *emit_not(AST *ast) {
 }
 
 char *emit_label(AST *ast) {
-    char *code = malloc(strlen(ast->label) + 4);
-    sprintf(code, "_%s:\n", ast->label);
+    char *name = picturename_to_c(ast->label);
+    char *code = malloc(strlen(name) + 4);
+    sprintf(code, "%s:\n", name); 
+    free(name);
     return code;
 }
 
@@ -485,15 +486,35 @@ char *emit_perform(AST *ast) {
 
 char *emit_procedure(AST *ast) {
     char *body = emit_list(&ast->proc.body);
-    char *code = malloc(strlen(ast->proc.name) + strlen(body) + 18);
-    sprintf(code, "void _%s() {\n%s}\n", ast->proc.name, body);
+    char *name = picturename_to_c(ast->proc.name);
+    char *code = malloc(strlen(name) + strlen(body) + 18);
+    sprintf(code, "void %s() {\n%s}\n", name, body);
     free(body);
     append_function(code);
 
-    sprintf(code, "void _%s();\n", ast->proc.name);
+    sprintf(code, "void %s();\n", name);
     append_function_predef(code);
     free(code);
+    free(name);
     return calloc(1, sizeof(char));
+}
+
+char *emit_perform_condition(AST *ast) {
+    char *stmt = emit_stmt(ast->perform_condition.proc);
+    char *condition = emit_stmt(ast->perform_condition.condition);
+    char *code = malloc(strlen(stmt) + strlen(condition) + 17);
+    sprintf(code, "while (!(%s))\n%s", condition, stmt);
+    free(stmt);
+    free(condition);
+    return code;
+}
+
+char *emit_perform_count(AST *ast) {
+    char *stmt = emit_stmt(ast->perform_count.proc);
+    char *code = malloc(strlen(stmt) + 41);
+    sprintf(code, "for (unsigned int i = 0; i < %u; i++)\n%s", ast->perform_count.times, stmt);
+    free(stmt);
+    return code;
 }
 
 char *emit_stmt(AST *ast) {
@@ -512,6 +533,8 @@ char *emit_stmt(AST *ast) {
         //case AST_GOTO: return emit_goto(ast);
         case AST_PERFORM: return emit_perform(ast);
         case AST_PROC: return emit_procedure(ast);
+        case AST_PERFORM_CONDITION: return emit_perform_condition(ast);
+        case AST_PERFORM_COUNT: return emit_perform_count(ast);
         default: break;
     }
 

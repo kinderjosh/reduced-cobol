@@ -84,6 +84,16 @@ void delete_ast(AST *ast) {
             free(ast->proc.name);
             delete_astlist(&ast->proc.body);
             break;
+        case AST_BLOCK:
+            delete_astlist(&ast->block);
+            break;
+        case AST_PERFORM_CONDITION:
+            delete_ast(ast->perform_condition.proc);
+            delete_ast(ast->perform_condition.condition);
+            break;
+        case AST_PERFORM_COUNT:
+            delete_ast(ast->perform_count.proc);
+            break;
         default: break;
     }
 
@@ -112,8 +122,11 @@ char *asttype_to_string(ASTType type) {
         case AST_IF: return "if";
         case AST_NOT: return "not";
         case AST_LABEL: return "label";
+        case AST_PERFORM_CONDITION: return "perform until";
+        case AST_PERFORM_COUNT: return "perform times";
         case AST_PERFORM: return "perform";
         case AST_PROC: return "procedure";
+        case AST_BLOCK: return "block";
         default: break;
     }
 

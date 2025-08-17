@@ -246,7 +246,9 @@ AST *parse_any_no_error(Parser *prs) {
     return NOP(prs->tok->ln, prs->tok->col);
 }
 
-AST *parse_display(Parser *prs, size_t ln, size_t col) {
+static bool displayed_previously;
+
+AST *parse_display(Parser *prs, size_t ln, size_t col, ASTList *root) {
     if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
         return NOP(ln, col);
 
@@ -257,7 +259,16 @@ AST *parse_display(Parser *prs, size_t ln, size_t col) {
     // End of display.
     if (thing->type != AST_STRING && thing->type != AST_VAR) {
         delete_ast(thing);
-        return NOP(ln, col);
+
+        if (!displayed_previously)
+            return NOP(ln, col);
+
+        // Add the newline at the end of a formatted display.
+        AST *nl = create_ast(AST_DISPLAY, prs->tok->ln, prs->tok->col);
+        nl->display.value = create_ast(AST_STRING, prs->tok->ln, prs->tok->col);
+        nl->display.value->constant.string = mystrdup("\\n");
+        nl->display.add_newline = false;
+        return nl;
     }
 
     delete_ast(thing);
@@ -289,13 +300,16 @@ AST *parse_display(Parser *prs, size_t ln, size_t col) {
     }
 
     // String concatenation going on here, we need to print the original string first.
+    displayed_previously = true;
     ast->display.add_newline = false;
-    astlist_push(root_ptr, ast);
+    astlist_push(root, ast);
 
     AST *bruh = create_ast(AST_DISPLAY, next->ln, next->col);
     bruh->display.value = next;
-    bruh->display.add_newline = true;
-    return bruh;
+    bruh->display.add_newline = false;
+    astlist_push(root, bruh);
+
+    return parse_display(prs, ln, col, root);
 }
 
 AST *parse_move(Parser *prs, size_t ln, size_t col) {
@@ -647,7 +661,9 @@ bool validate_stmt(AST *stmt) {
         case AST_IF:
         case AST_LABEL:
         case AST_PERFORM:
-        case AST_PROC: break;
+        case AST_PROC:
+        case AST_PERFORM_CONDITION:
+        case AST_PERFORM_COUNT: break;
         default:
             log_error(stmt->file, stmt->ln, stmt->col);
             fprintf(stderr, "invalid statement '%s'\n", asttype_to_string(stmt->type));
@@ -756,12 +772,68 @@ AST *parse_perform(Parser *prs, size_t ln, size_t col) {
         return NOP(ln, col);
     }
 
-    // Assume this label exists, gets validated in validate_labels().
-    AST *ast = create_ast(AST_PERFORM, ln, col);
+    AST *ast;
+
+    if (strcmp(peek(prs, 2)->value, "TIMES") == 0 ||
+            strcmp(peek(prs, 1)->value, "UNTIL") == 0) {
+        AST *perf = create_ast(AST_PERFORM, ln, col);
+        perf->perform = create_ast(AST_LABEL, ln, col);
+        perf->perform->label = mystrdup(prs->tok->value);
+        eat(prs, TOK_ID);
+
+        if (strcmp(prs->tok->value, "UNTIL") == 0) {
+            eat(prs, TOK_ID);
+            ast = create_ast(AST_PERFORM_CONDITION, ln, col);
+            ast->perform_condition.proc =  perf;
+            ast->perform_condition.condition = parse_condition(prs, NULL);
+            return ast;
+        }
+
+        ast = create_ast(AST_PERFORM_COUNT, ln, col);
+        ast->perform_count.proc =  perf;
+
+        if (prs->tok->type != TOK_INT) {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "expected integer constant TIMES count but found '%s'\n", tokentype_to_string(prs->tok->type));
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+            ast->perform_count.times = 0;
+        } else {
+            // parse_value() will also handle conversion errors.
+            AST *count = parse_value(prs, TYPE_NUMERIC);
+            ast->perform_count.times = (unsigned int)count->constant.i64;
+            delete_ast(count);
+        }
+
+        if (expect_identifier(prs, "TIMES"))
+            eat(prs, TOK_ID);
+
+        return ast;
+    }
+
+    ast = create_ast(AST_PERFORM, ln, col);
     ast->perform = create_ast(AST_LABEL, prs->tok->ln, prs->tok->col);
     ast->perform->label = mystrdup(prs->tok->value);
     eat(prs, TOK_ID);
     return ast;
+
+    /*
+
+    ASTList body = create_astlist();
+
+    //while (prs->tok->type != TOK_EOF && strcmp(prs->tok->value, "END-PERFORM") != 0 && strcmp(prs->tok->value, "UNTIL") != 0 &&
+    while (prs->tok->type != TOK_EOF && strcmp(prs->tok->value, "UNTIL") != 0) {
+        AST *stmt = parse_stmt(prs);
+
+        if (validate_stmt(stmt))
+            astlist_push(&body, stmt);
+    }
+
+    ast = create_ast(AST_PERFORM_CONDITION, ln, col);
+    eat(prs, TOK_ID);
+    ast->perform_condition.block = body;
+    ast->perform_condition.condition = parse_condition(prs, NULL);
+    return ast;
+    */
 }
 
 AST *parse_procedure(Parser *prs, char *name, size_t ln, size_t col) {
@@ -776,7 +848,20 @@ AST *parse_procedure(Parser *prs, char *name, size_t ln, size_t col) {
         if (prs->tok->type == TOK_ID && (peek(prs, 1)->type == TOK_DOT || strcmp(prs->tok->value, "END") == 0))
             break;
 
-        AST *stmt = parse_stmt(prs);
+        // So we can check for DISPLAY.
+        while (prs->tok->type == TOK_DOT)
+            eat(prs, TOK_DOT);
+
+        AST *stmt;
+        
+        if (strcmp(prs->tok->value, "DISPLAY") == 0) {
+            eat(prs, TOK_ID);
+
+            // DISPLAY can push arguments to the root, so we need to
+            // specify to push into the procedure body instead.
+            stmt = parse_display(prs, prs->tok->ln, prs->tok->col, &ast->proc.body);
+        } else
+            stmt = parse_stmt(prs);
 
         if (validate_stmt(stmt))
             astlist_push(&ast->proc.body, stmt);
@@ -850,7 +935,8 @@ AST *parse_id(Parser *prs) {
         return NOP(ln, col);
     } else if (strcmp(id, "DISPLAY") == 0) {
         free(id);
-        return parse_display(prs, ln, col);
+        displayed_previously = false;
+        return parse_display(prs, ln, col, root_ptr);
     } else if (strcmp(id, "MOVE") == 0) {
         free(id);
         return parse_move(prs, ln, col);

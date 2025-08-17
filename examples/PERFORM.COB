@@ -2,33 +2,28 @@
        PROGRAM-ID. TESTPROG.
        DATA DIVISION.
        WORKING-STORAGE SECTION.
-      * All variables are global, they can be used in all procedures.
-       01  X PIC 9 VALUE 0.
+       01  WS-CHAR PIC A VALUE 'A'.
+       01  WS-COUNT PIC 9 VALUE 3.
        PROCEDURE DIVISION.
-      * The program starts here.
+           DISPLAY "Count:".
 
-      * Perform these procedures and come back here.
-           PERFORM CHECKX.
+      * Perform a procedure a known amount of times.
+      * It must be a constant integer.
+           PERFORM SAY-HI 5 TIMES.
 
-           PERFORM SETX.
-      * X should now be 1, meaning it should display a message the next time
-      * CHECKX is performed.
+           DISPLAY "Condition:".
 
-           PERFORM CHECKX.
-    
-      * STOP RUN terminates the program.
+      * Perform a procedure until a condition is true.
+           PERFORM SAY-HI-DEC-COUNT UNTIL WS-COUNT = 0.
+
            STOP RUN.
+      
+       SAY-HI.
+           DISPLAY "Hi!".
 
-      * Procedures are created just like this. They end when either
-      * the program is ended as seen below, or a new procedure is created.
-       SETX.
-           MOVE 1 TO X.
-
-      * New procedure, SETX stops here.
-       CHECKX.
-           IF X = 1 THEN
-               DISPLAY "X is 1!"
-           END-IF.
-
-      * Add this at the end to tell CHECKX that it should end.
+       SAY-HI-DEC-COUNT.
+           PERFORM SAY-HI.
+           DISPLAY "Count: " WS-COUNT.
+           SUBTRACT 1 FROM WS-COUNT.
+       
        END PROGRAM TESTPROG.
