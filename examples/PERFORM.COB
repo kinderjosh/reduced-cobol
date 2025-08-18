@@ -26,4 +26,4 @@
            DISPLAY "Count: " WS-COUNT.
            SUBTRACT 1 FROM WS-COUNT.
        
-       END PROGRAM TESTPROG.
+       END PROGRAM PERFORM-EXAMPLE.
