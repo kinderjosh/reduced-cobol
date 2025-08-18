@@ -1,6 +1,6 @@
 CC = gcc
 SRCS = $(wildcard src/*.c)
-EXEC = cbl
+EXEC = cobc
 
 DEBUG ?= 0
 CFLAGS = -Wall -Wextra -Wpedantic -Wno-missing-braces -std=c11 -march=native
