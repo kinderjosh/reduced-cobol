@@ -1,5 +1,5 @@
        IDENTIFICATION DIVISION.
-       PROGRAM-ID. TESTPROG.
+       PROGRAM-ID. PROCEDURE-EXAMPLE.
        DATA DIVISION.
        WORKING-STORAGE SECTION.
       * All variables are global, they can be used in all procedures.
@@ -31,4 +31,4 @@
            END-IF.
 
       * Add this at the end to tell CHECKX that it should end.
-       END PROGRAM TESTPROG.
+       END PROGRAM PROCEDURE-EXAMPLE.
