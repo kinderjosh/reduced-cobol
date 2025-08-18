@@ -1,14 +1,14 @@
-# COBOL
+# RED COBOL
 
-An open-source COBOL compiler that generates native C99 code.
+RED COBOL is an open-source compiler for a reduced subset of COBOL that generates native C99 code.
 
 ## Installation
 
 Clone the repository and run the makefile:
 
 ```console
-$ git clone https://github.com/kinderjosh/cobol.git
-$ cd cobol
+$ git clone https://github.com/kinderjosh/red-cobol.git
+$ cd red-cobol
 $ make
 ```
 
@@ -30,4 +30,4 @@ $ make
 
 ## License
 
-This project is distributed under the [MIT](./LICENSE) license.
+RED COBOL is distributed under the [MIT](./LICENSE) license.
