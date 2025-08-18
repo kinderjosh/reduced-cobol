@@ -35,6 +35,8 @@ char *tokentype_to_string(TokenType type) {
         case TOK_LTE: return "less than or equal";
         case TOK_GT: return "greater than";
         case TOK_GTE: return "greater than or equal";
+        case TOK_AND: return "and";
+        case TOK_OR: return "or";
         default: break;
     }
 

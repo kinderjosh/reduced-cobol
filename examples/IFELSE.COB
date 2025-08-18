@@ -49,4 +49,16 @@
                END-IF
            END-IF.
 
+      * AND and OR.
+           MOVE 10 TO A.
+           MOVE 5 TO B.
+
+           IF A = 10 AND B = 5 THEN
+               DISPLAY "AND!"
+           END-IF.
+
+           IF A = 500 OR B = 5 THEN
+               DISPLAY "OR!"
+           END-IF.
+
            STOP RUN.

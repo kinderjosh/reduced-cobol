@@ -383,8 +383,8 @@ char *emit_compute(AST *ast) {
 
 char *emit_condition(AST *ast) {
     char *values = malloc(32);
-    values[0] = '\0';
-    size_t values_len = 0;
+    strcpy(values, "(");
+    size_t values_len = 1;
     size_t values_cap = 32;
 
     for (size_t i = 0; i < ast->condition.size; i++) {
@@ -404,14 +404,18 @@ char *emit_condition(AST *ast) {
                 strcpy(value_string, "<=");
             else if (value->oper == TOK_GT)
                 strcpy(value_string, ">");
-            else
+            else if (value->oper == TOK_GTE)
                 strcpy(value_string, ">=");
+            else if (value->oper == TOK_AND)
+                strcpy(value_string, "&&");
+            else
+                strcpy(value_string, "||");
         } else
             value_string = value_to_string(value);
 
         const size_t value_len = strlen(value_string);
 
-        if (values_len + value_len + 15 >= values_cap) {
+        if (values_len + value_len + 16 >= values_cap) {
             while (values_len + value_len + 15 >= values_cap)
                 values_cap *= 2;
 
@@ -427,6 +431,7 @@ char *emit_condition(AST *ast) {
             strcat(values, " ");
     }
 
+    strcat(values, ")");
     return values;
 }
 
@@ -438,11 +443,11 @@ char *emit_if(AST *ast) {
     if (ast->if_stmt.else_body.size > 0) {
         char *else_body = emit_list(&ast->if_stmt.else_body);
         code = malloc(strlen(condition) + strlen(body) + strlen(else_body) + 27);
-        sprintf(code, "if (%s) {\n%s\n} else {\n%s}\n", condition, body, else_body);
+        sprintf(code, "if %s {\n%s\n} else {\n%s}\n", condition, body, else_body);
         free(else_body);
     } else {
         code = malloc(strlen(condition) + strlen(body) + 15);
-        sprintf(code, "if (%s) {\n%s}\n", condition, body);
+        sprintf(code, "if %s {\n%s}\n", condition, body);
     }
 
     free(body);

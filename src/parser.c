@@ -17,7 +17,7 @@
 
 // I kinda feel guilty for these but like it's the best way...
 #define IS_MATH(prs) (prs->tok->type == TOK_PLUS || prs->tok->type == TOK_MINUS || prs->tok->type == TOK_STAR || prs->tok->type == TOK_SLASH || strcmp(prs->tok->value, "MOD") == 0)
-#define IS_CONDITION(prs) (prs->tok->type == TOK_EQ || prs->tok->type == TOK_EQUAL || prs->tok->type == TOK_NEQ || prs->tok->type == TOK_LT || prs->tok->type == TOK_LTE || prs->tok->type == TOK_GT || prs->tok->type == TOK_GTE || strcmp(prs->tok->value, "IS") == 0 || (strcmp(prs->tok->value, "NOT") == 0 && strcmp(peek(prs, 1)->value, "EQUAL") == 0))
+#define IS_CONDITION(prs) (prs->tok->type == TOK_EQ || prs->tok->type == TOK_EQUAL || prs->tok->type == TOK_NEQ || prs->tok->type == TOK_LT || prs->tok->type == TOK_LTE || prs->tok->type == TOK_GT || prs->tok->type == TOK_GTE || strcmp(prs->tok->value, "IS") == 0 || strcmp(prs->tok->value, "AND") == 0 || strcmp(prs->tok->value, "OR") == 0 || (strcmp(prs->tok->value, "NOT") == 0 && strcmp(peek(prs, 1)->value, "EQUAL") == 0))
 
 #define TABLE_SIZE 1000
 
@@ -598,6 +598,12 @@ AST *parse_oper(Parser *prs) {
             eat(prs, TOK_ID);
             oper->oper = TOK_NEQ;
         }
+    } else if (strcmp(prs->tok->value, "AND") == 0) {
+        oper->oper = TOK_AND;
+        eat(prs, TOK_ID);
+    } else if (strcmp(prs->tok->value, "OR") == 0) {
+        oper->oper = TOK_OR;
+        eat(prs, TOK_ID);
     } else {
         oper->oper = prs->tok->type;
         eat(prs, prs->tok->type);
@@ -617,6 +623,14 @@ AST *parse_condition(Parser *prs, AST *first) {
     while (IS_CONDITION(prs)) {
         astlist_push(&ast->condition, parse_oper(prs));
         astlist_push(&ast->condition, parse_value(prs, TYPE_ANY));
+
+        if (strcmp(prs->tok->value, "AND") == 0 || strcmp(prs->tok->value, "OR") == 0) {
+            AST *oper = create_ast(AST_OPER, prs->tok->ln, prs->tok->col);
+            oper->oper = strcmp(prs->tok->value, "AND") == 0 ? TOK_AND : TOK_OR;
+            eat(prs, TOK_ID);
+            astlist_push(&ast->condition, oper);
+            astlist_push(&ast->condition, parse_value(prs, TYPE_ANY));
+        }
     }
 
     return ast;
