@@ -15,12 +15,12 @@ void log_error(char *file, size_t ln, size_t col) {
     errors++;
 
     if (errors == ERROR_CAP) {
-        fprintf(stderr, ESC_BOLD "cbl: " ESC_RED "error: " ESC_NORMAL ESC_BOLD "maximum of %d errors logged, aborting\n" ESC_NORMAL, (int)errors - 1);
+        fprintf(stderr, ESC_BOLD "cobc: " ESC_RED "error: " ESC_NORMAL ESC_BOLD "maximum of %d errors logged, aborting\n" ESC_NORMAL, (int)errors - 1);
         exit(EXIT_FAILURE);
     }
 
     if (file == NULL)
-        fprintf(stderr, ESC_BOLD "cbl: " ESC_RED "error: " ESC_NORMAL);
+        fprintf(stderr, ESC_BOLD "cobc: " ESC_RED "error: " ESC_NORMAL);
     else if (ln != 0 && col != 0)
         fprintf(stderr, ESC_BOLD "%s:%zu:%zu: " ESC_RED "error: " ESC_NORMAL, file, ln, col);
     else

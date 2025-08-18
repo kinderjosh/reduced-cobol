@@ -1,6 +1,6 @@
 # COBOL
 
-This repository contains a transpiler for COBOL that I started writing while drunk. It transpiles to C99 and is written from scratch.
+An open-source COBOL compiler that generates native C99 code.
 
 ## Installation
 
@@ -15,7 +15,7 @@ $ make
 ## Usage
 
 ```
-./cbl <command> [options] <input file>
+./cobc <command> [options] <input file>
 ```
 
 | Command | Description |
@@ -30,4 +30,4 @@ $ make
 
 ## License
 
-The COBOL transpiler is distributed under the [MIT](./LICENSE) license.
+This project is distributed under the [MIT](./LICENSE) license.
