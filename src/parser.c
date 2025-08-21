@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <ctype.h>
 
 #define NOP(ln, col) create_ast(AST_NOP, ln, col)
 
@@ -165,6 +166,10 @@ AST *parse_value(Parser *prs, PictureType type) {
         case AST_PARENS:
         case AST_NOT:
         case AST_LABEL: break;
+        case AST_SUBSCRIPT:
+            if (value->subscript.value == NULL)
+                break;
+            __attribute__((fallthrough));
         default:
             log_error(value->file, value->ln, value->col);
             fprintf(stderr, "invalid value '%s'\n", asttype_to_string(value->type));
@@ -187,7 +192,7 @@ bool assert_in_division(Parser *prs, Division div, size_t ln, size_t col) {
 
     if (prs->cur_division != div) {
         log_error(prs->file, ln, col);
-        fprintf(stderr, "invalid statement outside of %s DIVISION\n", str);
+        fprintf(stderr, "invalid clause outside of %s DIVISION\n", str);
         show_error(prs->file, ln, col);
         eat_until(prs, TOK_DOT); // Next statement.
         return false;
@@ -213,7 +218,7 @@ bool assert_in_section(Parser *prs, Section sect, size_t ln, size_t col) {
 
     if (prs->cur_section != sect) {
         log_error(prs->file, ln, col);
-        fprintf(stderr, "invalid statement outside of %s SECTION\n", str);
+        fprintf(stderr, "invalid clause outside of %s SECTION\n", str);
         show_error(prs->file, ln, col);
         eat_until(prs, TOK_DOT); // Next statement.
         return false;
@@ -337,12 +342,30 @@ AST *parse_move(Parser *prs, size_t ln, size_t col) {
 
             eat_until(prs, TOK_DOT);
             return NOP(ln, col);
+        } else if (sym->is_index) {
+            log_error(prs->file, var_tok->ln, var_tok->col);
+            fprintf(stderr, "moving into index variable '%s' when SET should be used instead\n", var_tok->value);
+            show_error(prs->file, var_tok->ln, var_tok->col);
+
+            eat_until(prs, TOK_DOT);
+            return NOP(ln, col);
         }
 
         pictype = sym->type;
-        var = create_ast(AST_VAR, var_tok->ln, var_tok->col);
-        var->var.name = mystrdup(var_tok->value);
-        var->var.sym = sym;
+        size_t old_pos = prs->pos;
+        jump_to(prs, prs->pos + 2);
+
+        // var_tok is now the current token.
+
+        // Check if we are moving into a table variable and not a subscript.
+        if (sym->count > 0 && peek(prs, 1)->type != TOK_LPAREN) {
+            log_error(prs->file, var_tok->ln, var_tok->col);
+            fprintf(stderr, "moving into table '%s'\n", sym->name);
+            show_error(prs->file, var_tok->ln, var_tok->col);
+        }
+
+        var = parse_stmt(prs);
+        jump_to(prs, old_pos);
     }
 
     AST *ast = create_ast(AST_MOVE, ln, col);
@@ -356,6 +379,13 @@ AST *parse_move(Parser *prs, size_t ln, size_t col) {
     eat(prs, TOK_ID);
     ast->move.dst = var;
     eat(prs, TOK_ID);
+
+    // Skip any () if there.
+    if (var->type == AST_SUBSCRIPT) {
+        eat_until(prs, TOK_RPAREN);
+        eat(prs, TOK_RPAREN);
+    }
+
     return ast;
 }
 
@@ -398,7 +428,7 @@ AST *parse_arithmetic(Parser *prs, char *name, size_t ln, size_t col) {
         // If we did get one of these, it'll show an error below anyway.
         if (right->type != AST_VAR) {
             log_error(right->file, right->ln, right->col);
-            fprintf(stderr, "implicit giving statement but right value isn't a storage value\n");
+            fprintf(stderr, "implicit giving clause but right value isn't a storage value\n");
             show_error(right->file, right->ln, right->col);
         }
     } else {
@@ -677,10 +707,12 @@ bool validate_stmt(AST *stmt) {
         case AST_PERFORM:
         case AST_PROC:
         case AST_PERFORM_CONDITION:
-        case AST_PERFORM_COUNT: break;
+        case AST_PERFORM_COUNT:
+        case AST_PERFORM_VARYING:
+        case AST_PERFORM_UNTIL: break;
         default:
             log_error(stmt->file, stmt->ln, stmt->col);
-            fprintf(stderr, "invalid statement '%s'\n", asttype_to_string(stmt->type));
+            fprintf(stderr, "invalid clause '%s'\n", asttype_to_string(stmt->type));
             show_error(stmt->file, stmt->ln, stmt->col);
             break;
     }
@@ -776,8 +808,121 @@ AST *parse_goto(Parser *prs, size_t ln, size_t col) {
 }
 */
 
+AST *parse_perform_varying(Parser *prs, size_t ln, size_t col) {
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, NULL)) {
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    Variable *var = find_variable(prs->file, prs->tok->value);
+
+    if (!var->used) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "undefined variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    } else if (var->is_index) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "varying variable '%s' is an index variable\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    } else if (var->count > 0) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "varying variable '%s' is a table\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    char *name = mystrdup(prs->tok->value);
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, "FROM")) {
+        free(name);
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    eat(prs, TOK_ID);
+    AST *from = parse_value(prs, TYPE_ANY);
+
+    if (!expect_identifier(prs, "BY")) {
+        free(name);
+        delete_ast(from);
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    eat(prs, TOK_ID);
+    AST *by = parse_value(prs, TYPE_ANY);
+
+    if (!expect_identifier(prs, "UNTIL")) {
+        free(name);
+        delete_ast(from);
+        delete_ast(by);
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    eat(prs, TOK_ID);
+
+    AST *iter = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
+    iter->var.name = name;
+    iter->var.sym = var;
+
+    AST *ast = create_ast(AST_PERFORM_VARYING, ln, col);
+    ast->perform_varying.var = iter;
+    ast->perform_varying.from = from;
+    ast->perform_varying.by = by;
+    ast->perform_varying.until = parse_condition(prs, NULL);
+    ast->perform_varying.body = create_astlist();
+
+    while (prs->tok->type != TOK_EOF && strcmp(prs->tok->value, "END-PERFORM") != 0) {
+        AST *stmt = parse_stmt(prs);
+
+        if (validate_stmt(stmt))
+            astlist_push(&ast->perform_varying.body, stmt);
+    }
+
+    eat(prs, TOK_ID);
+    eat(prs, TOK_DOT);
+    return ast;
+}
+
+AST *parse_perform_until(Parser *prs, size_t ln, size_t col) {
+    eat(prs, TOK_ID);
+
+    AST *ast = create_ast(AST_PERFORM_UNTIL, ln, col);
+    ast->perform_until.until = parse_condition(prs, NULL);
+    ast->perform_until.body = create_astlist();
+
+    while (prs->tok->type != TOK_EOF && strcmp(prs->tok->value, "END-PERFORM") != 0) {
+        AST *stmt = parse_stmt(prs);
+
+        if (validate_stmt(stmt))
+            astlist_push(&ast->perform_until.body, stmt);
+    }
+
+    if (expect_identifier(prs, "END-PERFORM")) {
+        eat(prs, TOK_ID);
+        eat(prs, TOK_DOT);
+    }
+    return ast;
+}
+
 AST *parse_perform(Parser *prs, size_t ln, size_t col) {
-    if (prs->tok->type != TOK_ID) {
+    if (strcmp(prs->tok->value, "VARYING") == 0)
+        return parse_perform_varying(prs, ln, col);
+    else if (strcmp(prs->tok->value, "UNTIL") == 0)
+        return parse_perform_until(prs, ln, col);
+    else if (!expect_identifier(prs, NULL)) {
         log_error(prs->file, ln, col);
         fprintf(stderr, "expected procedure name but found '%s'\n", tokentype_to_string(prs->tok->type));
         show_error(prs->file, ln, col);
@@ -813,8 +958,8 @@ AST *parse_perform(Parser *prs, size_t ln, size_t col) {
             ast->perform_count.times = 0;
         } else {
             // parse_value() will also handle conversion errors.
-            AST *count = parse_value(prs, TYPE_NUMERIC);
-            ast->perform_count.times = (unsigned int)count->constant.i64;
+            AST *count = parse_value(prs, TYPE_UNSIGNED_NUMERIC);
+            ast->perform_count.times = (unsigned int)count->constant.i32;
             delete_ast(count);
         }
 
@@ -851,7 +996,9 @@ AST *parse_perform(Parser *prs, size_t ln, size_t col) {
 }
 
 AST *parse_procedure(Parser *prs, char *name, size_t ln, size_t col) {
-    add_variable(prs->file, name, TYPE_ANY, 0)->is_label = true;
+    Variable *var = add_variable(prs->file, name, TYPE_ANY, 0);
+    var->is_label = true;
+    var->is_index = false;
 
     AST *ast = create_ast(AST_PROC, ln, col);
     ast->proc.name = name;
@@ -881,6 +1028,138 @@ AST *parse_procedure(Parser *prs, char *name, size_t ln, size_t col) {
             astlist_push(&ast->proc.body, stmt);
     }
 
+    return ast;
+}
+
+AST *parse_subscript(Parser *prs, AST *base) {
+    unsigned int table_size = 1;
+
+    switch (base->type) {
+        case AST_VAR:
+            if (base->var.sym->count > 0) {
+                table_size = base->var.sym->count;
+                break;
+            }
+
+            log_error(base->file, base->ln, base->col);
+            fprintf(stderr, "accessing non-table variable '%s'\n", base->var.name);
+            show_error(base->file, base->ln, base->col);
+            break;
+        default:
+            log_error(base->file, base->ln, base->col);
+            fprintf(stderr, "accessing non-table value '%s'\n", asttype_to_string(base->type));
+            show_error(base->file, base->ln, base->col);
+            break;
+    }
+
+    AST *ast = create_ast(AST_SUBSCRIPT, base->ln, base->col);
+    ast->subscript.base = base;
+
+    eat(prs, TOK_LPAREN);
+    AST *index = parse_value(prs, TYPE_ANY);
+
+    switch (index->type) {
+        case AST_NOP: break;
+        case AST_INT:
+            if (index->constant.i32 < 1) {
+                log_error(index->file, index->ln, index->col);
+                fprintf(stderr, "subscript %d goes below the minimum of 1\n", index->constant.i32);
+                show_error(index->file, index->ln, index->col);
+            } else if ((unsigned int)index->constant.i32 > table_size) {
+                log_error(index->file, index->ln, index->col);
+                fprintf(stderr, "subscript %d goes out of bounds of table size %u\n", index->constant.i32, table_size);
+                show_error(index->file, index->ln, index->col);
+            }
+            break;
+        case AST_VAR:
+            if (index->var.sym->count > 0) {
+                log_error(index->file, index->ln, index->col);
+                fprintf(stderr, "subscript variable '%s' is a table\n", index->var.name);
+                show_error(index->file, index->ln, index->col);
+            } else if (index->var.sym->type != TYPE_UNSIGNED_NUMERIC && index->var.sym->type != TYPE_SIGNED_NUMERIC) {
+                log_error(index->file, index->ln, index->col);
+                fprintf(stderr, "subscript variable '%s' is not numeric\n", index->var.name);
+                show_error(index->file, index->ln, index->col);
+            }
+            break;
+        default:
+            log_error(index->file, index->ln, index->col);
+            fprintf(stderr, "invalid subscript value '%s'\n", asttype_to_string(index->type));
+            show_error(index->file, index->ln, index->col);
+            break;
+    }
+
+    ast->subscript.index = index;
+    eat(prs, TOK_RPAREN);
+
+    if (prs->tok->type == TOK_EQUAL) {
+        eat(prs, TOK_EQUAL);
+        ast->subscript.value = parse_value(prs, TYPE_ANY);
+    } else
+        ast->subscript.value = NULL;
+
+    return ast;
+}
+
+AST *parse_set(Parser *prs, size_t ln, size_t col) {
+    Variable *var = find_variable(prs->file, prs->tok->value);
+
+    if (!var->used) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "undefined index variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    } else if (!var->is_index) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "setting non-index variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    char *name = mystrdup(prs->tok->value);
+    eat(prs, TOK_ID);
+
+    if (strcmp(prs->tok->value, "UP") == 0 || strcmp(prs->tok->value, "DOWN") == 0) {
+        TokenType math = strcmp(prs->tok->value, "UP") == 0 ? TOK_PLUS : TOK_MINUS;
+        eat(prs, TOK_ID);
+
+        if (!expect_identifier(prs, "BY")) {
+            free(name);
+            eat_until(prs, TOK_DOT);
+            return NOP(ln, col);
+        }
+
+        eat(prs, TOK_ID);
+
+        AST *ast = create_ast(AST_ARITHMETIC, ln, col);
+        ast->arithmetic.name = mystrdup(math == TOK_PLUS ? "ADD" : "SUBTRACT");
+        ast->arithmetic.cloned_left = ast->arithmetic.cloned_right = false;
+        ast->arithmetic.dst = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
+        ast->arithmetic.dst->var.name = name;
+        ast->arithmetic.dst->var.sym = var;
+        ast->arithmetic.implicit_giving = true;
+        ast->arithmetic.left = parse_value(prs, var->type);
+        ast->arithmetic.right = ast->arithmetic.dst;
+        return ast;
+    }
+
+    if (!expect_identifier(prs, "TO")) {
+        free(name);
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    eat(prs, TOK_ID);
+
+    AST *ast = create_ast(AST_MOVE, ln, col);
+    ast->move.dst = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
+    ast->move.dst->var.name = name;
+    ast->move.dst->var.sym = var;
+    ast->move.src = parse_value(prs, var->type);
     return ast;
 }
 
@@ -983,6 +1262,9 @@ AST *parse_id(Parser *prs) {
     } else if (strcmp(id, "PERFORM") == 0) {
         free(id);
         return parse_perform(prs, ln, col);
+    } else if (strcmp(id, "SET") == 0) {
+        free(id);
+        return parse_set(prs, ln, col);
     }
 
     // User-defined stuff.
@@ -998,6 +1280,10 @@ AST *parse_id(Parser *prs) {
         AST *ast = create_ast(AST_VAR, ln, col);
         ast->var.name = id;
         ast->var.sym = sym;
+
+        if (prs->tok->type == TOK_LPAREN)
+            return parse_subscript(prs, ast);
+
         return ast;
     } else if (prs->cur_division == DIV_PROCEDURE && prs->tok->type == TOK_DOT)
         return parse_procedure(prs, id, ln, col);
@@ -1023,7 +1309,7 @@ AST *parse_constant(Parser *prs) {
 
     if (prs->tok->type == TOK_INT) {
         ast = create_ast(AST_INT, prs->tok->ln, prs->tok->col);
-        ast->constant.i64 = strtoll(prs->tok->value, &endptr, 10);
+        ast->constant.i32 = strtoll(prs->tok->value, &endptr, 10);
     } else {
         ast = create_ast(AST_FLOAT, prs->tok->ln, prs->tok->col);
         ast->constant.f64 = strtod(prs->tok->value, &endptr);
@@ -1050,13 +1336,15 @@ AST *parse_pic(Parser *prs) {
     assert(prs->tok->type == TOK_INT);
     AST *level = parse_constant(prs);
 
-    if (level->constant.i64 < 1 || level->constant.i64 > 49) {
+    if (level->constant.i32 < 1 || level->constant.i32 > 49) {
         log_error(level->file, level->ln, level->col);
-        fprintf(stderr, "invalid level '%" PRId64 "'; level not within 1-49\n", level->constant.i64);
+        fprintf(stderr, "invalid level '%d'; level not within 1-49\n", level->constant.i32);
         show_error(level->file, level->ln, level->col);
     }
 
     char *name = mystrdup(prs->tok->value);
+    AST *ast = create_ast(AST_PIC, prs->tok->ln, prs->tok->col);
+
     eat(prs, TOK_ID);
     eat(prs, TOK_ID); // PIC
 
@@ -1070,7 +1358,10 @@ AST *parse_pic(Parser *prs) {
         type = TYPE_ALPHANUMERIC;
         eat(prs, prs->tok->type);
     } else if (strcmp(prs->tok->value, "9") == 0) {
-        type = TYPE_NUMERIC;
+        type = TYPE_UNSIGNED_NUMERIC;
+        eat(prs, prs->tok->type);
+    } else if (strcmp(prs->tok->value, "S9") == 0) {
+        type = TYPE_SIGNED_NUMERIC;
         eat(prs, prs->tok->type);
     } else {
         log_error(prs->file, prs->tok->ln, prs->tok->col);
@@ -1079,11 +1370,11 @@ AST *parse_pic(Parser *prs) {
         type = TYPE_ALPHANUMERIC;
     }
 
-    AST *ast = create_ast(AST_PIC, level->ln, level->col);
-    ast->pic.level = level->constant.i64;
+    ast->pic.level = level->constant.i32;
     delete_ast(level);
     ast->pic.name = name;
     ast->pic.type = type;
+    ast->pic.is_index = false;
 
     if (prs->tok->type == TOK_LPAREN) {
         eat(prs, TOK_LPAREN);
@@ -1095,7 +1386,7 @@ AST *parse_pic(Parser *prs) {
 
             eat_until(prs, TOK_DOT);
             ast->pic.count = 0;
-        } else if (type == TYPE_NUMERIC) {
+        } else if (type == TYPE_SIGNED_NUMERIC || type == TYPE_UNSIGNED_NUMERIC) {
             // Currently, we don't care if numbers are just PIC 9 or have a length.
             // Just ignore it for now.
             // TODO: This maybe.
@@ -1103,7 +1394,7 @@ AST *parse_pic(Parser *prs) {
             ast->pic.count = 0;
         } else {
             AST *size = parse_constant(prs);
-            ast->pic.count = (unsigned int)size->constant.i64;
+            ast->pic.count = (unsigned int)size->constant.i32;
             delete_ast(size);
         }
 
@@ -1111,13 +1402,89 @@ AST *parse_pic(Parser *prs) {
     } else
         ast->pic.count = 0;
 
+    if (prs->tok->type == TOK_ID && prs->tok->value[0] == 'V' && strcmp(prs->tok->value, "VALUE") != 0) {
+        // TODO: Actually specify decimal points with V?
+        eat(prs, TOK_ID);
+
+        if (type != TYPE_SIGNED_NUMERIC) {
+            log_error(prs->file, ast->ln, ast->col);
+            fprintf(stderr, "declaring variable '%s' with decimal points but it is unsigned\n", name);
+            show_error(prs->file, ast->ln, ast->col);
+        }
+
+        ast->pic.type = TYPE_DECIMAL_NUMERIC;
+    }
+
     if (strcmp(prs->tok->value, "VALUE") == 0) {
         eat(prs, TOK_ID);
         ast->pic.value = parse_value(prs, type);
     } else
         ast->pic.value = NULL;
 
-    add_variable(ast->file, ast->pic.name, ast->pic.type, ast->pic.count);
+    if (strcmp(prs->tok->value, "OCCURS") == 0) {
+        eat(prs, TOK_ID);
+
+        if (prs->tok->type != TOK_INT) {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "expected constant integer for table size but found '%s'\n", tokentype_to_string(prs->tok->type));
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+            eat_until(prs, TOK_DOT);
+        } else {
+            AST *size = parse_constant(prs);
+            ast->pic.count = (unsigned int)size->constant.i32;
+            delete_ast(size);
+        }
+
+        if (expect_identifier(prs, "TIMES")) {
+            eat(prs, TOK_ID);
+
+            if (strcmp(prs->tok->value, "INDEXED") != 0) 
+                goto done;
+            
+            eat(prs, TOK_ID);
+
+            if (!expect_identifier(prs, "BY"))
+                goto done;
+
+            eat(prs, TOK_ID);
+
+            if (expect_identifier(prs, NULL)) {
+                Variable *index_var = find_variable(prs->file, prs->tok->value);
+
+                // TODO: Add file/ln/col info to Variable for logging stuff you idiot?
+                if (index_var->used) {
+                    log_error(prs->file, prs->tok->ln, prs->tok->col);
+                    fprintf(stderr, "redefinition of index variable '%s'\n", prs->tok->value);
+                    show_error(prs->file, prs->tok->ln, prs->tok->col);
+                    eat(prs, TOK_ID);
+                    goto done;
+                }
+
+
+                AST *pic = create_ast(AST_PIC, prs->tok->ln, prs->tok->col);
+                pic->pic.name = mystrdup(prs->tok->value);
+                pic->pic.level = ast->pic.level;
+
+                // Initialize to first index = 1.
+                pic->pic.value = create_ast(AST_INT, prs->tok->ln, prs->tok->col);
+                pic->pic.value->constant.i32 = 1;
+
+                pic->pic.type = TYPE_UNSIGNED_NUMERIC;
+                pic->pic.count = 0;
+                pic->pic.is_index = true;
+
+                Variable *var = add_variable(pic->file, pic->pic.name, pic->pic.type, pic->pic.count);
+                var->is_index = true;
+                eat(prs, TOK_ID);
+                astlist_push(root_ptr, pic);
+            }
+        }
+    }
+
+// Bunch of stuff that could possibly be parsed, don't want to
+// repeat code or make new functions, a goto here is useful.
+done:
+    add_variable(ast->file, ast->pic.name, ast->pic.type, ast->pic.count)->is_index = false;
     return ast;
 }
 
@@ -1127,7 +1494,7 @@ AST *parse_parens(Parser *prs) {
     ast->parens = parse_value(prs, TYPE_ANY);
 
     if (IS_MATH(prs))
-        ast->parens = parse_math(prs, ast->parens, TYPE_NUMERIC);
+        ast->parens = parse_math(prs, ast->parens, TYPE_SIGNED_NUMERIC);
     else if (IS_CONDITION(prs))
         ast->parens = parse_condition(prs, ast->parens);
 
@@ -1144,9 +1511,17 @@ AST *parse_stmt(Parser *prs) {
         case TOK_ID: return parse_id(prs);
         case TOK_INT:
             // Check if it's a PICTURE clause.
-            if (peek(prs, 1)->type == TOK_ID && peek(prs, 2)->type == TOK_ID &&
-                    strcmp(peek(prs, 2)->value, "PIC") == 0)
-                return parse_pic(prs);
+            if (prs->cur_division == DIV_DATA && peek(prs, 1)->type == TOK_ID) {
+                if (peek(prs, 2)->type == TOK_DOT) {
+                    // Level statement with no PIC.
+                    eat(prs, TOK_INT);
+                    eat(prs, TOK_ID);
+                    return NOP(prs->tok->ln, prs->tok->col);
+                }
+                // Normal PIC.
+                else if (strcmp(peek(prs, 2)->value, "PIC") == 0)
+                    return parse_pic(prs);
+            }
 
             __attribute__((fallthrough));
         case TOK_FLOAT:
@@ -1156,7 +1531,7 @@ AST *parse_stmt(Parser *prs) {
     }
 
     log_error(prs->file, prs->tok->ln, prs->tok->col);
-    fprintf(stderr, "invalid statement '%s'\n", tokentype_to_string(prs->tok->type));
+    fprintf(stderr, "invalid clause '%s'\n", tokentype_to_string(prs->tok->type));
     show_error(prs->file, prs->tok->ln, prs->tok->col);
 
     eat_until(prs, TOK_DOT); // Next statement.

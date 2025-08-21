@@ -94,6 +94,24 @@ void delete_ast(AST *ast) {
         case AST_PERFORM_COUNT:
             delete_ast(ast->perform_count.proc);
             break;
+        case AST_PERFORM_VARYING:
+            delete_ast(ast->perform_varying.var);
+            delete_ast(ast->perform_varying.by);
+            delete_ast(ast->perform_varying.from);
+            delete_ast(ast->perform_varying.until);
+            delete_astlist(&ast->perform_varying.body);
+            break;
+        case AST_PERFORM_UNTIL:
+            delete_ast(ast->perform_until.until);
+            delete_astlist(&ast->perform_until.body);
+            break;
+        case AST_SUBSCRIPT:
+            delete_ast(ast->subscript.base);
+            delete_ast(ast->subscript.index);
+
+            if (ast->subscript.value != NULL)
+                delete_ast(ast->subscript.value);
+            break;
         default: break;
     }
 
@@ -122,11 +140,14 @@ char *asttype_to_string(ASTType type) {
         case AST_IF: return "if";
         case AST_NOT: return "not";
         case AST_LABEL: return "label";
+        case AST_PERFORM: return "perform";
         case AST_PERFORM_CONDITION: return "perform until";
         case AST_PERFORM_COUNT: return "perform times";
-        case AST_PERFORM: return "perform";
+        case AST_PERFORM_VARYING: return "perform varying";
+        case AST_PERFORM_UNTIL: return "perform until";
         case AST_PROC: return "procedure";
         case AST_BLOCK: return "block";
+        case AST_SUBSCRIPT: return "subscript";
         default: break;
     }
 

@@ -22,7 +22,14 @@ static size_t function_predefs_len;
 static size_t function_predefs_cap;
 
 char *picturetype_to_c(PictureType type) {
-    return type == TYPE_NUMERIC ? "double" : "char";
+    if (type == TYPE_DECIMAL_NUMERIC)
+        return "double";
+    else if (type == TYPE_SIGNED_NUMERIC)
+        return "int";
+    else if (type == TYPE_UNSIGNED_NUMERIC)
+        return "unsigned int";
+
+    return "char";
 }
 
 char *picturename_to_c(char *name) {
@@ -55,7 +62,11 @@ char *value_to_string(AST *ast) {
             return calloc(1, sizeof(char));
         case AST_INT:
             string = malloc(32);
-            sprintf(string, "%" PRId64, ast->constant.i64);
+            sprintf(string, "%d", ast->constant.i32);
+            return string;
+        case AST_FLOAT:
+            string = malloc(32);
+            sprintf(string, "%lf", ast->constant.f64);
             return string;
         case AST_STRING:
             string = malloc(strlen(ast->constant.string) + 3);
@@ -72,6 +83,7 @@ char *value_to_string(AST *ast) {
         case AST_LABEL: return picturename_to_c(ast->label);
         case AST_MATH:
         case AST_CONDITION:
+        case AST_SUBSCRIPT:
         case AST_NOT: return emit_stmt(ast);
         default: break;
     }
@@ -204,31 +216,39 @@ char *emit_stop(AST *ast) {
     return mystrdup("return 0;\n");
 }
 
-char *emit_display(AST *ast) {
-    char *arg;
-    char *code;
+char *picturetype_to_format_specifier(PictureType type, unsigned int count) {
+    if (type == TYPE_DECIMAL_NUMERIC)
+        return "%g";
+    else if (type == TYPE_SIGNED_NUMERIC)
+        return "%d";
+    else if (type == TYPE_UNSIGNED_NUMERIC)
+        return "%u";
+    else if (count == 0)
+        return "%c";
 
-    switch (ast->display.value->type) {
+    return "%s";
+}
+
+char *emit_display(AST *ast) {
+    AST *value = ast->display.value;
+    char *arg = value_to_string(value);
+    char *code = malloc(strlen(arg) + 42);
+
+    switch (value->type) {
         case AST_STRING:
-            arg = value_to_string(ast->display.value);
-            code = malloc(strlen(arg) + 42);
             sprintf(code, "fputs(%s, stdout);\n", arg);
             break;
         case AST_VAR:
-            arg = value_to_string(ast->display.value);
-            code = malloc(strlen(arg) + 42);
-
-            if (ast->display.value->var.sym->type == TYPE_NUMERIC)
-                sprintf(code, "printf(\"%%g\", %s);\n", arg);
-            // A single character string, not actually treated as a string.
-            else if (ast->display.value->var.sym->count == 0)
-                sprintf(code, "printf(\"%%c\", %s);\n", arg);
-            else
-                sprintf(code, "printf(\"%%s\", %s);\n", arg);
+            sprintf(code, "printf(\"%s\", %s);\n", picturetype_to_format_specifier(value->var.sym->type, value->var.sym->count), arg);
+            break;
+        case AST_SUBSCRIPT:
+            assert(value->subscript.base->type == AST_VAR);
+            sprintf(code, "printf(\"%s\", %s);\n", picturetype_to_format_specifier(value->subscript.base->var.sym->type, 0), arg);
             break;
         default:
             assert(false);
-            return calloc(1, sizeof(char));
+            code[0] = '\0';
+            break;
     }
 
     if (ast->display.add_newline)
@@ -242,6 +262,10 @@ char *emit_pic(AST *ast) {
     const char *type = picturetype_to_c(ast->pic.type);
     char *name = picturename_to_c(ast->pic.name);
     char *code;
+
+    if ((ast->pic.type == TYPE_ALPHABETIC || ast->pic.type == TYPE_ALPHANUMERIC) && ast->pic.count > 0)
+        // Account for the null byte.
+        ast->pic.count++;
 
     if (ast->pic.value == NULL) {
         code = malloc(strlen(name) + strlen(type) + 12);
@@ -522,6 +546,56 @@ char *emit_perform_count(AST *ast) {
     return code;
 }
 
+char *emit_perform_varying(AST *ast) {
+    char *iter = value_to_string(ast->perform_varying.var);
+    char *from = value_to_string(ast->perform_varying.from);
+    char *by = value_to_string(ast->perform_varying.by);
+    char *condition = value_to_string(ast->perform_varying.until);
+    char *body = emit_list(&ast->perform_varying.body);
+
+    char *code = malloc((strlen(iter) * 2) + strlen(from) + strlen(by) + strlen(condition) + strlen(body) + 32);
+    sprintf(code, "for (%s = %s; !%s; %s += %s) {\n%s}\n", iter, from, condition, iter, by, body);
+
+    free(body);
+    free(condition);
+    free(by);
+    free(from);
+    free(iter);
+    return code;
+}
+
+char *emit_perform_until(AST *ast) {
+    char *condition = emit_stmt(ast->perform_until.until);
+    char *body = emit_list(&ast->perform_until.body);
+
+    char *code = malloc(strlen(condition) + strlen(body) + 41);
+    sprintf(code, "while (!%s) {\n%s}\n", condition, body);
+
+    free(condition);
+    free(body);
+    return code;
+}
+
+char *emit_subscript(AST *ast) {
+    char *base = value_to_string(ast->subscript.base);
+    char *index = value_to_string(ast->subscript.index);
+    char *code;
+
+    if (ast->subscript.value == NULL) {
+        code = malloc(strlen(base) + strlen(index) + 21);
+        sprintf(code, "%s[(size_t)(%s - 1)]", base, index);
+    } else {
+        char *value = value_to_string(ast->subscript.value);
+        code = malloc(strlen(base) + strlen(index) + strlen(value) + 28);
+        sprintf(code, "%s[(size_t)(%s - 1)] = %s;\n", base, index, value);
+        free(value);
+    }
+
+    free(base);
+    free(index);
+    return code;
+}
+
 char *emit_stmt(AST *ast) {
     switch (ast->type) {
         case AST_STOP: return emit_stop(ast);
@@ -540,6 +614,9 @@ char *emit_stmt(AST *ast) {
         case AST_PROC: return emit_procedure(ast);
         case AST_PERFORM_CONDITION: return emit_perform_condition(ast);
         case AST_PERFORM_COUNT: return emit_perform_count(ast);
+        case AST_PERFORM_VARYING: return emit_perform_varying(ast);
+        case AST_PERFORM_UNTIL: return emit_perform_until(ast);
+        case AST_SUBSCRIPT: return emit_subscript(ast);
         default: break;
     }
 

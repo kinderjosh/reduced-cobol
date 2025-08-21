@@ -9,8 +9,10 @@
 typedef enum {
     TYPE_ANY,
     TYPE_ALPHABETIC,
-    TYPE_NUMERIC,
-    TYPE_ALPHANUMERIC
+    TYPE_ALPHANUMERIC,
+    TYPE_SIGNED_NUMERIC,
+    TYPE_UNSIGNED_NUMERIC,
+    TYPE_DECIMAL_NUMERIC
 } PictureType;
 
 typedef struct {
@@ -20,6 +22,7 @@ typedef struct {
     unsigned int count;
     bool used;
     bool is_label;
+    bool is_index;
 } Variable;
 
 typedef enum {
@@ -46,7 +49,10 @@ typedef enum {
     AST_PROC,
     AST_BLOCK,
     AST_PERFORM_CONDITION,
-    AST_PERFORM_COUNT
+    AST_PERFORM_COUNT,
+    AST_PERFORM_VARYING,
+    AST_PERFORM_UNTIL,
+    AST_SUBSCRIPT
 } ASTType;
 
 typedef struct AST AST;
@@ -66,8 +72,8 @@ typedef struct AST {
     union {
         ASTList root;
         
-        struct {
-            uint64_t i64;
+        union {
+            int32_t i32;
             double f64;
             char *string;
         } constant;
@@ -88,6 +94,7 @@ typedef struct AST {
             PictureType type;
             AST *value;
             unsigned int count;
+            bool is_index;
         } pic;
 
         struct {
@@ -142,6 +149,25 @@ typedef struct AST {
             AST *proc;
             unsigned int times;
         } perform_count;
+
+        struct {
+            AST *var;
+            AST *by;
+            AST *from;
+            AST *until;
+            ASTList body;
+        } perform_varying;
+
+        struct {
+            AST *until;
+            ASTList body;
+        } perform_until;
+
+        struct {
+            AST *base;
+            AST *index;
+            AST *value;
+        } subscript;
     };
 } AST;
 

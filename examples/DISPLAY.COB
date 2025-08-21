@@ -2,11 +2,11 @@
        PROGRAM-ID. DISPLAY-EXAMPLE.
        DATA DIVISION.
        WORKING-STORAGE SECTION.
-       01  MY-NUMBER PIC 9(2) VALUE 50.
-       01  MY-CHARACTER PIC A VALUE 'X'.
-       01  MY-STRING PIC A(32) VALUE "Hello!".
-       01  MY-MIXED-STRING PIC X(32) VALUE "ABC123".
-       01  HALF PIC 9.
+       01 MY-NUMBER PIC 9(02) VALUE 50.
+       01 MY-CHARACTER PIC A VALUE 'X'.
+       01 MY-STRING PIC A(32) VALUE "Hello!".
+       01 MY-MIXED-STRING PIC X(32) VALUE "ABC123".
+       01 HALF PIC 9.
        PROCEDURE DIVISION.
       * Note that the DISPLAY intrinsic always ends in a new line.
 

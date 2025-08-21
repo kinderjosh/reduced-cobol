@@ -46,8 +46,8 @@ int compile(char *infile, char *outfile, unsigned int flags) {
         return EXIT_SUCCESS;
     }
 
-    char *cmd = malloc(strlen(cc_path) + strlen(outfile) + strlen(outc) + 12);
-    sprintf(cmd, "%s -o %s %s", cc_path, outfile, outc);
+    char *cmd = malloc(strlen(cc_path) + strlen(outfile) + strlen(outc) + 21);
+    sprintf(cmd, "%s -std=c99 -o %s %s", cc_path, outfile, outc);
     int status = system(cmd);
 
     if (remove(outc) != 0) {

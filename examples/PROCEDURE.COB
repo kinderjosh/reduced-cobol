@@ -3,7 +3,7 @@
        DATA DIVISION.
        WORKING-STORAGE SECTION.
       * All variables are global, they can be used in all procedures.
-       01  X PIC 9 VALUE 0.
+       01 X PIC 9 VALUE 0.
        PROCEDURE DIVISION.
       * The program starts here.
 
