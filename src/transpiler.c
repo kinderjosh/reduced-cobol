@@ -608,7 +608,7 @@ char *emit_subscript(AST *ast) {
 }
 
 char *emit_call(AST *ast) {
-    char *code = malloc(strlen(ast->call.name) + 4);
+    char *code = malloc(strlen(ast->call.name) + 8);
     sprintf(code, "%s(", ast->call.name);
     size_t len = strlen(code);
 
@@ -616,7 +616,7 @@ char *emit_call(AST *ast) {
         char *arg = value_to_string(ast->call.args.items[i]);
         const size_t arg_len = strlen(arg);
 
-        code = realloc(code, len + arg_len + 6);
+        code = realloc(code, len + arg_len + 7);
         strcat(code, arg);
         free(arg);
         len += arg_len;
