@@ -53,7 +53,9 @@ typedef enum {
     AST_PERFORM_VARYING,
     AST_PERFORM_UNTIL,
     AST_SUBSCRIPT,
-    AST_CALL
+    AST_CALL,
+    AST_NULL,
+    AST_BOOL
 } ASTType;
 
 typedef struct AST AST;
@@ -174,6 +176,8 @@ typedef struct AST {
             char *name;
             ASTList args;
         } call;
+        
+        bool bool_value;
     };
 } AST;
 

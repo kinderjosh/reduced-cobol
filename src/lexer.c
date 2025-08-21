@@ -29,12 +29,16 @@ Lexer create_lexer(char *file) {
     size_t read_size = fread(src, 1, file_size, f);
     fclose(f);
 
+#ifndef _WIN32
+    // TOFIX: Why does this shit not work on windows?
+
     if (file_size != read_size) {
         log_error(file, 0, 0);
         fprintf(stderr, "failed to read file\n");
         free(src);
         exit(1);
     }
+#endif
 
     src[read_size] = '\0';
 

@@ -165,12 +165,15 @@ AST *parse_value(Parser *prs, PictureType type) {
         case AST_VAR:
         case AST_PARENS:
         case AST_NOT:
-        case AST_LABEL: break;
+        case AST_LABEL:
+        case AST_NULL:
+        case AST_BOOL: break;
         case AST_SUBSCRIPT:
             if (value->subscript.value == NULL)
                 break;
-            __attribute__((fallthrough));
+            goto fallthrough;
         default:
+fallthrough:
             log_error(value->file, value->ln, value->col);
             fprintf(stderr, "invalid value '%s'\n", asttype_to_string(value->type));
             show_error(value->file, value->ln, value->col);
@@ -1299,6 +1302,17 @@ AST *parse_id(Parser *prs) {
         return parse_call(prs, ln, col);
     }
 
+    // Constants.
+    else if (strcmp(id, "NULL") == 0) {
+        free(id);
+        return create_ast(AST_NULL, ln, col);
+    } else if (strcmp(id, "TRUE") == 0 || strcmp(id, "FALSE") == 0) {
+        AST *ast = create_ast(AST_NULL, ln, col);
+        ast->bool_value = strcmp(id, "TRUE") == 0;
+        free(id);
+        return ast;
+    }
+
     // User-defined stuff.
     Variable *sym;
 
@@ -1555,8 +1569,9 @@ AST *parse_stmt(Parser *prs) {
                     return parse_pic(prs);
             }
 
-            __attribute__((fallthrough));
+            goto fallthrough;
         case TOK_FLOAT:
+fallthrough:
         case TOK_STRING: return parse_constant(prs);
         case TOK_LPAREN: return parse_parens(prs);
         default: break;

@@ -15,6 +15,9 @@ void usage(const char *prog) {
            "    source              produce a c file\n"
            "    run                 build and run the executable\n"
            "options:\n"
+           "    -include <header>   include a c header\n"
+           "    -l <library>        link with a c library\n"
+           "    -no-main            don't add a main function\n"
            "    -o <output file>    specify the output filename\n", prog);
 }
 
@@ -40,10 +43,52 @@ int main(int argc, char **argv) {
     }
 
     char *infile = NULL;
+#ifdef _WIN32
+    char *outfile = "a.exe";
+#else
     char *outfile = "a.out";
+#endif
+    char *libs = calloc(1, sizeof(char));
+    size_t libs_len = 0;
+    char *source_includes = calloc(1, sizeof(char));
+    size_t source_includes_len = 0;
 
     for (int i = 2; i < argc; i++) {
-        if (strcmp(argv[i], "-o") == 0) {
+        if (strcmp(argv[i], "-l") == 0) {
+            if (i == argc - 1) {
+                log_error(NULL, 0, 0);
+                fprintf(stderr, "missing library name\n");
+                return EXIT_FAILURE;
+            }
+
+            const size_t len = strlen(argv[++i]);
+            libs = realloc(libs, libs_len + len + 5);
+
+            if (libs_len > 0) {
+                strcat(libs, " ");
+                libs_len++;
+            }
+
+            strcat(libs, "-l");
+            strcat(libs, argv[i]);
+            libs_len += len + 2;
+        } else if (strcmp(argv[i], "-include") == 0) {
+            if (i == argc - 1) {
+                log_error(NULL, 0, 0);
+                fprintf(stderr, "missing include header\n");
+                return EXIT_FAILURE;
+            }
+
+            const size_t len = strlen(argv[++i]);
+            source_includes = realloc(source_includes, source_includes_len + len + 17);
+
+            strcat(source_includes, "#include <");
+            strcat(source_includes, argv[i]);
+            strcat(source_includes, ".h>\n");
+            source_includes_len += len + 15;
+        } else if (strcmp(argv[i], "-no-main") == 0)
+            flags |= COMP_NO_MAIN;
+        else if (strcmp(argv[i], "-o") == 0) {
             if (i == argc - 1) {
                 log_error(NULL, 0, 0);
                 fprintf(stderr, "missing output filename\n");
@@ -67,5 +112,8 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
     
-    return compile(infile, outfile, flags);
+    int status = compile(infile, outfile, flags, libs, source_includes);
+    free(libs);
+    free(source_includes);
+    return status;
 }

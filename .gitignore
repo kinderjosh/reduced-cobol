@@ -1,5 +1,7 @@
 cobc
+cobc.exe
 a.out
+a.exe
 TEST.COB
 TEST.c
 .vscode

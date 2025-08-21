@@ -88,6 +88,8 @@ char *value_to_string(AST *ast) {
         case AST_CONDITION:
         case AST_SUBSCRIPT:
         case AST_NOT: return emit_stmt(ast);
+        case AST_BOOL: return mystrdup(ast->bool_value ? "true" : "false");
+        case AST_NULL: return mystrdup("NULL");
         default: break;
     }
 
@@ -166,7 +168,7 @@ char *emit_list(ASTList *list) {
     return code;
 }
 
-char *emit_root(AST *root, bool require_main) {
+char *emit_root(AST *root, bool require_main, char *source_includes) {
     char *code = malloc(1024);
     strcpy(code, "int main(void) {\n");
 
@@ -208,11 +210,11 @@ char *emit_root(AST *root, bool require_main) {
     char *total;
 
     if (require_main) {
-        total = malloc(INCLUDE_LIBS_LEN + len + globals_len + functions_len + function_predefs_len + 28);
-        sprintf(total, "%s%s%s%s%s", INCLUDE_LIBS, globals, function_predefs, functions, code);
+        total = malloc(INCLUDE_LIBS_LEN + len + globals_len + functions_len + function_predefs_len + strlen(source_includes) + 28);
+        sprintf(total, "%s%s%s%s%s%s", source_includes, INCLUDE_LIBS, globals, function_predefs, functions, code);
     } else {
-        total = malloc(INCLUDE_LIBS_LEN + globals_len + functions_len + function_predefs_len + 28);
-        sprintf(total, "%s%s%s%s", INCLUDE_LIBS, globals, function_predefs, functions);
+        total = malloc(INCLUDE_LIBS_LEN + globals_len + functions_len + function_predefs_len + strlen(source_includes) + 28);
+        sprintf(total, "%s%s%s%s%s", source_includes, INCLUDE_LIBS, globals, function_predefs, functions);
     }
 
     free(code);

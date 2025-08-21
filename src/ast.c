@@ -153,6 +153,8 @@ char *asttype_to_string(ASTType type) {
         case AST_BLOCK: return "block";
         case AST_SUBSCRIPT: return "subscript";
         case AST_CALL: return "call";
+        case AST_NULL: return "null";
+        case AST_BOOL: return "bool";
         default: break;
     }
 

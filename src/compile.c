@@ -11,10 +11,7 @@
 
 extern char *cc_path;
 
-int compile(char *infile, char *outfile, unsigned int flags) {
-    (void)outfile;
-    (void)flags;
-
+int compile(char *infile, char *outfile, unsigned int flags, char *libs, char *source_includes) {
     AST *root = parse_file(infile);
 
     if (error_count() > 0) {
@@ -22,7 +19,7 @@ int compile(char *infile, char *outfile, unsigned int flags) {
         return EXIT_FAILURE;
     }
 
-    char *code = emit_root(root, !(flags & COMP_OBJECT));
+    char *code = emit_root(root, !(flags & COMP_NO_MAIN), source_includes);
     delete_ast(root);
 
     char *outc = replace_file_extension((flags & COMP_SOURCE_ONLY) && !(flags & COMP_OUTFILE_SPECIFIED) ? infile : outfile, "c", true);
@@ -50,12 +47,12 @@ int compile(char *infile, char *outfile, unsigned int flags) {
 
     if (flags & COMP_OBJECT) {
         char *objfile = (flags & COMP_OUTFILE_SPECIFIED) ? mystrdup(outfile) : replace_file_extension(infile, "o", true);
-        cmd = malloc(strlen(cc_path) + strlen(objfile) + strlen(outc) + 24);
-        sprintf(cmd, "%s -std=c99 -c -o %s %s", cc_path, objfile, outc);
+        cmd = malloc(strlen(cc_path) + strlen(objfile) + strlen(outc) + strlen(libs) + 24);
+        sprintf(cmd, "%s -c -o %s %s %s", cc_path, objfile, outc, libs);
         free(objfile);
     } else {
-        cmd = malloc(strlen(cc_path) + strlen(outfile) + strlen(outc) + 21);
-        sprintf(cmd, "%s -std=c99 -o %s %s", cc_path, outfile, outc);
+        cmd = malloc(strlen(cc_path) + strlen(outfile) + strlen(outc) + strlen(libs) + 21);
+        sprintf(cmd, "%s -o %s %s %s", cc_path, outfile, outc, libs);
     }
 
     int status = system(cmd);

@@ -23,4 +23,8 @@ $(EXEC): $(SRCS)
 	$(CC) $(CFLAGS) $^ -o $@
 
 clean:
+ifeq ($(OS),Windows_NT)
+	del /q .\$(EXEC).exe
+else
 	rm -f ./$(EXEC)
+endif
