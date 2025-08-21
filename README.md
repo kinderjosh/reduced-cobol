@@ -21,6 +21,7 @@ $ make
 | Command | Description |
 | --- | --- |
 | build | Produce an executable. |
+| object | Produce an object file. |
 | source | Produce a C file. |
 | run | Build and run the executable. |
 

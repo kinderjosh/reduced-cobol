@@ -11,6 +11,7 @@ void usage(const char *prog) {
     printf("usage: %s <command> [options] <input file>\n"
            "commands:\n"
            "    build               produce an executable\n"
+           "    object              produce an object file\n"
            "    source              produce a c file\n"
            "    run                 build and run the executable\n"
            "options:\n"
@@ -28,6 +29,8 @@ int main(int argc, char **argv) {
 
     if (strcmp(command, "source") == 0)
         flags |= COMP_SOURCE_ONLY;
+    else if (strcmp(command, "object") == 0)
+        flags |= COMP_OBJECT;
     else if (strcmp(command, "run") == 0)
         flags |= COMP_RUN;
     else if (strcmp(command, "build") != 0) {

@@ -46,8 +46,18 @@ int compile(char *infile, char *outfile, unsigned int flags) {
         return EXIT_SUCCESS;
     }
 
-    char *cmd = malloc(strlen(cc_path) + strlen(outfile) + strlen(outc) + 21);
-    sprintf(cmd, "%s -std=c99 -o %s %s", cc_path, outfile, outc);
+    char *cmd;
+
+    if (flags & COMP_OBJECT) {
+        char *objfile = (flags & COMP_OUTFILE_SPECIFIED) ? mystrdup(outfile) : replace_file_extension(infile, "o", true);
+        cmd = malloc(strlen(cc_path) + strlen(objfile) + strlen(outc) + 24);
+        sprintf(cmd, "%s -std=c99 -c -o %s %s", cc_path, objfile, outc);
+        free(objfile);
+    } else {
+        cmd = malloc(strlen(cc_path) + strlen(outfile) + strlen(outc) + 21);
+        sprintf(cmd, "%s -std=c99 -o %s %s", cc_path, outfile, outc);
+    }
+
     int status = system(cmd);
 
     if (remove(outc) != 0) {

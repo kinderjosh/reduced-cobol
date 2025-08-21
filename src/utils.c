@@ -13,7 +13,9 @@ char *mystrdup(char *str) {
 
 char *get_basename(char *file) {
     char *extension = strchr(file, '.');
-    assert(extension != NULL);
+
+    if (extension == NULL)
+        return mystrdup(file);
 
     size_t len = extension - file;
     char *basename = malloc(len + 1);
