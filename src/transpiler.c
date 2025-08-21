@@ -166,7 +166,7 @@ char *emit_list(ASTList *list) {
     return code;
 }
 
-char *emit_root(AST *root) {
+char *emit_root(AST *root, bool require_main) {
     char *code = malloc(1024);
     strcpy(code, "int main(void) {\n");
 
@@ -205,8 +205,16 @@ char *emit_root(AST *root) {
     strcat(code, "return 0;\n}\n");
     len += 13;
 
-    char *total = malloc(INCLUDE_LIBS_LEN + len + globals_len + functions_len + function_predefs_len + 28);
-    sprintf(total, "%s%s%s%s%s", INCLUDE_LIBS, globals, function_predefs, functions, code);
+    char *total;
+
+    if (require_main) {
+        total = malloc(INCLUDE_LIBS_LEN + len + globals_len + functions_len + function_predefs_len + 28);
+        sprintf(total, "%s%s%s%s%s", INCLUDE_LIBS, globals, function_predefs, functions, code);
+    } else {
+        total = malloc(INCLUDE_LIBS_LEN + globals_len + functions_len + function_predefs_len + 28);
+        sprintf(total, "%s%s%s%s", INCLUDE_LIBS, globals, function_predefs, functions);
+    }
+
     free(code);
     free(globals);
     free(functions);

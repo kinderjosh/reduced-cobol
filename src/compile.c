@@ -22,7 +22,7 @@ int compile(char *infile, char *outfile, unsigned int flags) {
         return EXIT_FAILURE;
     }
 
-    char *code = emit_root(root);
+    char *code = emit_root(root, !(flags & COMP_OBJECT));
     delete_ast(root);
 
     char *outc = replace_file_extension((flags & COMP_SOURCE_ONLY) && !(flags & COMP_OUTFILE_SPECIFIED) ? infile : outfile, "c", true);
