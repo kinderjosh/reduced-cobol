@@ -1,6 +1,6 @@
 # RED COBOL
 
-RED COBOL is an open-source compiler for a reduced subset of COBOL that generates native C99 code.
+RED COBOL is an open-source compiler for a reduced subset of COBOL that generates native C99 code for Windows and Unix-like operating systems.
 
 ## Requirements
 
