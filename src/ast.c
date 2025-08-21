@@ -112,6 +112,10 @@ void delete_ast(AST *ast) {
             if (ast->subscript.value != NULL)
                 delete_ast(ast->subscript.value);
             break;
+        case AST_CALL:
+            free(ast->call.name);
+            delete_astlist(&ast->call.args);
+            break;
         default: break;
     }
 
@@ -148,6 +152,7 @@ char *asttype_to_string(ASTType type) {
         case AST_PROC: return "procedure";
         case AST_BLOCK: return "block";
         case AST_SUBSCRIPT: return "subscript";
+        case AST_CALL: return "call";
         default: break;
     }
 

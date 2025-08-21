@@ -9,6 +9,9 @@
 #include <stdint.h>
 #include <inttypes.h>
 
+#define INCLUDE_LIBS "#define _RED_COBOL_SOURCE\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdint.h>\n#include <ctype.h>\n#include <inttypes.h>\n#include <limits.h>\n"
+#define INCLUDE_LIBS_LEN 208
+
 static char *globals;
 static size_t globals_len;
 static size_t globals_cap;
@@ -202,8 +205,8 @@ char *emit_root(AST *root) {
     strcat(code, "return 0;\n}\n");
     len += 13;
 
-    char *total = malloc(len + globals_len + functions_len + function_predefs_len + 28);
-    sprintf(total, "#include <stdio.h>\n%s%s%s%s", globals, function_predefs, functions, code);
+    char *total = malloc(INCLUDE_LIBS_LEN + len + globals_len + functions_len + function_predefs_len + 28);
+    sprintf(total, "%s%s%s%s%s", INCLUDE_LIBS, globals, function_predefs, functions, code);
     free(code);
     free(globals);
     free(functions);
@@ -596,6 +599,30 @@ char *emit_subscript(AST *ast) {
     return code;
 }
 
+char *emit_call(AST *ast) {
+    char *code = malloc(strlen(ast->call.name) + 4);
+    sprintf(code, "%s(", ast->call.name);
+    size_t len = strlen(code);
+
+    for (size_t i = 0; i < ast->call.args.size; i++) {
+        char *arg = value_to_string(ast->call.args.items[i]);
+        const size_t arg_len = strlen(arg);
+
+        code = realloc(code, len + arg_len + 6);
+        strcat(code, arg);
+        free(arg);
+        len += arg_len;
+
+        if (i != ast->call.args.size - 1) {
+            strcat(code, ", ");
+            len += 2;
+        }
+    }
+
+    strcat(code, ");\n");
+    return code;
+}
+
 char *emit_stmt(AST *ast) {
     switch (ast->type) {
         case AST_STOP: return emit_stop(ast);
@@ -617,6 +644,7 @@ char *emit_stmt(AST *ast) {
         case AST_PERFORM_VARYING: return emit_perform_varying(ast);
         case AST_PERFORM_UNTIL: return emit_perform_until(ast);
         case AST_SUBSCRIPT: return emit_subscript(ast);
+        case AST_CALL: return emit_call(ast);
         default: break;
     }
 

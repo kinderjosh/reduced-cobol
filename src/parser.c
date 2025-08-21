@@ -709,7 +709,8 @@ bool validate_stmt(AST *stmt) {
         case AST_PERFORM_CONDITION:
         case AST_PERFORM_COUNT:
         case AST_PERFORM_VARYING:
-        case AST_PERFORM_UNTIL: break;
+        case AST_PERFORM_UNTIL:
+        case AST_CALL: break;
         default:
             log_error(stmt->file, stmt->ln, stmt->col);
             fprintf(stderr, "invalid clause '%s'\n", asttype_to_string(stmt->type));
@@ -1163,6 +1164,34 @@ AST *parse_set(Parser *prs, size_t ln, size_t col) {
     return ast;
 }
 
+AST *parse_call(Parser *prs, size_t ln, size_t col) {
+    if (prs->tok->type != TOK_STRING) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "expected string for function to call but found '%s'\n", tokentype_to_string(prs->tok->type));
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    AST *ast = create_ast(AST_CALL, ln, col);
+    ast->call.name = mystrdup(prs->tok->value);
+    eat(prs, TOK_STRING);
+    ast->call.args = create_astlist();
+
+    if (strcmp(prs->tok->value, "USING") == 0) {
+        eat(prs, TOK_ID);
+        astlist_push(&ast->call.args, parse_value(prs, TYPE_ANY));
+
+        while (prs->tok->type == TOK_COMMA) {
+            eat(prs, TOK_COMMA);
+            astlist_push(&ast->call.args, parse_value(prs, TYPE_ANY));
+        }
+    }
+
+    return ast;
+}
+
 AST *parse_id(Parser *prs) {
     const size_t ln = prs->tok->ln;
     const size_t col = prs->tok->col;
@@ -1265,6 +1294,9 @@ AST *parse_id(Parser *prs) {
     } else if (strcmp(id, "SET") == 0) {
         free(id);
         return parse_set(prs, ln, col);
+    } else if (strcmp(id, "CALL") == 0) {
+        free(id);
+        return parse_call(prs, ln, col);
     }
 
     // User-defined stuff.

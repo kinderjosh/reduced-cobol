@@ -45,6 +45,24 @@ char *get_basepath(char *path) {
     return base;
 }
 
+char *get_file_extension(char *file) {
+    char *ext = malloc(strlen(file));
+    ext[0] = '\0';
+
+    char *pos = strchr(file, '.');
+
+    if (pos == NULL || ++pos == NULL)
+        return ext;
+
+    size_t ext_len = 0;
+
+    while (pos)
+        ext[ext_len++] = (*pos)++;
+
+    ext[ext_len] = '\0';
+    return ext;
+}
+
 char *replace_file_extension(char *file, char *extension, bool remove_path) {
     char *basename;
 

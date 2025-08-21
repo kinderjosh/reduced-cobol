@@ -52,7 +52,8 @@ typedef enum {
     AST_PERFORM_COUNT,
     AST_PERFORM_VARYING,
     AST_PERFORM_UNTIL,
-    AST_SUBSCRIPT
+    AST_SUBSCRIPT,
+    AST_CALL
 } ASTType;
 
 typedef struct AST AST;
@@ -168,6 +169,11 @@ typedef struct AST {
             AST *index;
             AST *value;
         } subscript;
+
+        struct {
+            char *name;
+            ASTList args;
+        } call;
     };
 } AST;
 

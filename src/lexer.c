@@ -438,6 +438,7 @@ Token lex_next_token(Lexer *lex) {
                 return create_and_step(lex, TOK_GTE, ">=");
 
             return create_and_step(lex, TOK_GT, ">");
+        case ',': return create_and_step(lex, TOK_COMMA, ",");
         default: break;
     }
 
