@@ -24,7 +24,7 @@ static char *function_predefs;
 static size_t function_predefs_len;
 static size_t function_predefs_cap;
 
-char *picturetype_to_c(PictureType type) {
+char *picturetype_to_c(unsigned int type) {
     if (type == TYPE_DECIMAL_NUMERIC)
         return "double";
     else if (type == TYPE_SIGNED_NUMERIC)
@@ -176,8 +176,8 @@ char *emit_root(AST *root, bool require_main, char *source_includes) {
     size_t cap = 1024;
 
     globals = malloc(1024);
-    globals[0] = '\0';
-    globals_len = 0;
+    strcpy(globals, "char string_builder[4097];\nsize_t string_builder_pointer;\n");
+    globals_len = 59;
     globals_cap = 1024;
 
     functions = malloc(1024);
@@ -229,70 +229,84 @@ char *emit_stop(AST *ast) {
     return mystrdup("return 0;\n");
 }
 
-char *picturetype_to_format_specifier(PictureType type, unsigned int count) {
-    if (type == TYPE_DECIMAL_NUMERIC)
-        return "%g";
-    else if (type == TYPE_SIGNED_NUMERIC)
-        return "%d";
-    else if (type == TYPE_UNSIGNED_NUMERIC)
-        return "%u";
-    else if (count == 0)
-        return "%c";
+char *picturetype_to_format_specifier(PictureType *type) {
+    char *spec = malloc(32);
 
-    return "%s";
+    if (type->type == TYPE_DECIMAL_NUMERIC)
+        sprintf(spec, "%%0%u.%ulf", type->places + type->decimal_places + 1, type->decimal_places);
+    else if (type->type == TYPE_SIGNED_NUMERIC)
+        sprintf(spec, "%%.%ud", type->places);
+    else if (type->type == TYPE_UNSIGNED_NUMERIC)
+        sprintf(spec, "%%.%uu", type->places);
+    else if (type->count == 0)
+        strcpy(spec, "%c");
+    else
+        sprintf(spec, "%%.%us", type->places);
+
+    return spec;
 }
 
 char *emit_display(AST *ast) {
     AST *value = ast->display.value;
     char *arg = value_to_string(value);
-    char *code = malloc(strlen(arg) + 42);
+    char *code;
 
     switch (value->type) {
         case AST_STRING:
+            code = malloc(strlen(arg) + 20);
             sprintf(code, "fputs(%s, stdout);\n", arg);
             break;
-        case AST_VAR:
-            sprintf(code, "printf(\"%s\", %s);\n", picturetype_to_format_specifier(value->var.sym->type, value->var.sym->count), arg);
+        case AST_VAR: {
+            char *spec = picturetype_to_format_specifier(&value->var.sym->type);
+            code = malloc(strlen(spec) + strlen(arg) + 19);
+            sprintf(code, "printf(\"%s\", %s);\n", spec, arg);
+            free(spec);
             break;
+        }
         case AST_SUBSCRIPT:
             assert(value->subscript.base->type == AST_VAR);
-            sprintf(code, "printf(\"%s\", %s);\n", picturetype_to_format_specifier(value->subscript.base->var.sym->type, 0), arg);
+            char *spec = picturetype_to_format_specifier(&value->var.sym->type);
+            code = malloc(strlen(spec) + strlen(arg) + 19);
+            sprintf(code, "printf(\"%s\", %s);\n", spec, arg);
+            free(spec);
             break;
         default:
             assert(false);
-            code[0] = '\0';
+            code = calloc(1, sizeof(char));
             break;
     }
 
-    if (ast->display.add_newline)
+    if (ast->display.add_newline) {
+        code = realloc(code, strlen(code) + 22);
         strcat(code, "fputc('\\n', stdout);\n");
+    }
 
     free(arg);
     return code;
 }
 
 char *emit_pic(AST *ast) {
-    const char *type = picturetype_to_c(ast->pic.type);
+    const char *type = picturetype_to_c(ast->pic.type.type);
     char *name = picturename_to_c(ast->pic.name);
     char *code;
 
-    if ((ast->pic.type == TYPE_ALPHABETIC || ast->pic.type == TYPE_ALPHANUMERIC) && ast->pic.count > 0)
+    if ((ast->pic.type.type == TYPE_ALPHABETIC || ast->pic.type.type == TYPE_ALPHANUMERIC) && ast->pic.type.count > 0)
         // Account for the null byte.
-        ast->pic.count++;
+        ast->pic.type.count++;
 
     if (ast->pic.value == NULL) {
         code = malloc(strlen(name) + strlen(type) + 12);
 
-        if (ast->pic.count > 0)
-            sprintf(code, "%s %s[%u];\n", type, name, ast->pic.count);
+        if (ast->pic.type.count > 0)
+            sprintf(code, "%s %s[%u];\n", type, name, ast->pic.type.count);
         else
             sprintf(code, "%s %s;\n", type, name);
     } else {
         char *value = value_to_string(ast->pic.value);
         code = malloc(strlen(name) + strlen(value) + strlen(type) + 17);
 
-        if (ast->pic.count > 0)
-            sprintf(code, "%s %s[%u] = %s;\n", type, name, ast->pic.count, value);
+        if (ast->pic.type.count > 0)
+            sprintf(code, "%s %s[%u] = %s;\n", type, name, ast->pic.type.count, value);
         else
             sprintf(code, "%s %s = %s;\n", type, name, value);
 
@@ -308,8 +322,14 @@ char *emit_pic(AST *ast) {
 char *emit_move(AST *ast) {
     char *dst = value_to_string(ast->move.dst);
     char *src = value_to_string(ast->move.src);
-    char *code = malloc(strlen(src) + strlen(dst) + 32);
-    sprintf(code, "%s = %s;\n", dst, src);
+
+    char *code = malloc(strlen(src) + strlen(dst) + 17);
+
+    if (ast->move.src->type == AST_STRING)
+        sprintf(code, "strcpy(%s, %s);\n", dst, src);
+    else
+        sprintf(code, "%s = %s;\n", dst, src);
+
     free(dst);
     free(src);
     return code;
@@ -610,8 +630,18 @@ char *emit_subscript(AST *ast) {
 }
 
 char *emit_call(AST *ast) {
-    char *code = malloc(strlen(ast->call.name) + 8);
-    sprintf(code, "%s(", ast->call.name);
+    char *code;
+    
+    if (ast->call.returning == NULL) {
+        code = malloc(strlen(ast->call.name) + 8);
+        sprintf(code, "%s(", ast->call.name);
+    } else {
+        char *returning = value_to_string(ast->call.returning);
+        code = malloc(strlen(returning) + strlen(ast->call.name) + 32);
+        sprintf(code, "%s = %s(", returning, ast->call.name);
+        free(returning);
+    }
+
     size_t len = strlen(code);
 
     for (size_t i = 0; i < ast->call.args.size; i++) {
@@ -630,6 +660,75 @@ char *emit_call(AST *ast) {
     }
 
     strcat(code, ");\n");
+    return code;
+}
+
+char *emit_string_stmt(StringStatement *stmt) {
+    char *value = value_to_string(stmt->value);
+    char *code = malloc((strlen(value) * 5) + 256);
+    bool increment_pointer = true;
+
+    switch (stmt->delimit) {
+        case DELIM_SIZE:
+            sprintf(code, "strcat(string_builder, %s);\n", value);
+            break;
+        case DELIM_SPACE:
+            sprintf(code, "strncat(string_builder, %s, strchr(%s, ' ') - %s);\n"
+                          "string_builder_pointer += strlen(%s);\n"
+                          "string_builder[string_builder_pointer] = '\\0';\n", value, value, value, value);
+
+            increment_pointer = false;
+            break;
+        default:
+            assert(false);
+            code = calloc(1, sizeof(char));
+            break;
+    }
+
+    if (!increment_pointer) {
+        free(value);
+        return code;
+    }
+
+    if (stmt->value->type == AST_STRING) {
+        char buffer[32];
+        sprintf(buffer, "%zu", strlen(stmt->value->constant.string));
+        strcat(code, "string_builder_pointer += ");
+        strcat(code, buffer);
+        strcat(code, ";\n");
+    } else {
+        strcat(code, "string_builder_pointer += strlen(");
+        strcat(code, value);
+        strcat(code, ");\n");
+    }
+
+    free(value);
+    return code;
+}
+
+char *emit_string_builder(AST *ast) {
+    char *stmts = emit_string_stmt(&ast->string_builder.base);
+    size_t stmts_len = strlen(stmts);
+
+    for (size_t i = 0; i < ast->string_builder.stmt_count; i++) {
+        char *next = emit_string_stmt(&ast->string_builder.stmts[i]);
+        const size_t len = strlen(next);
+
+        stmts = realloc(stmts, stmts_len + len + 1);
+        strcat(stmts, next);
+        free(next);
+        stmts_len += len;
+    }
+
+    char *into = value_to_string(ast->string_builder.into);
+    char *code = malloc(strlen(stmts) + strlen(into) + 85);
+    sprintf(code, "string_builder[0] = '\\0';\n"
+                  "string_builder_pointer = 0;\n"
+                  "%s"
+                  "strcpy(%s, string_builder);\n", stmts, into);
+
+    free(stmts);
+    free(into);
     return code;
 }
 
@@ -655,6 +754,7 @@ char *emit_stmt(AST *ast) {
         case AST_PERFORM_UNTIL: return emit_perform_until(ast);
         case AST_SUBSCRIPT: return emit_subscript(ast);
         case AST_CALL: return emit_call(ast);
+        case AST_STRING_BUILDER: return emit_string_builder(ast);
         default: break;
     }
 

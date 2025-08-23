@@ -153,7 +153,7 @@ bool expect_identifier(Parser *prs, char *id) {
 
 AST *parse_stmt(Parser *prs);
 
-AST *parse_value(Parser *prs, PictureType type) {
+AST *parse_value(Parser *prs, unsigned int type) {
     (void)type;
     AST *value = parse_stmt(prs);
 
@@ -324,7 +324,7 @@ AST *parse_move(Parser *prs, size_t ln, size_t col) {
     if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
         return NOP(ln, col);
 
-    PictureType pictype = TYPE_ANY;
+    PictureType pictype = { .type = TYPE_ANY, .count = 0 };
     Token *var_tok = peek(prs, 2);
     AST *var;
 
@@ -360,8 +360,10 @@ AST *parse_move(Parser *prs, size_t ln, size_t col) {
 
         // var_tok is now the current token.
 
+        // TODO: If alphabetic or alphanumeric, this isn't checked because of moving strings,
+        // will this cause errors if not a string?
         // Check if we are moving into a table variable and not a subscript.
-        if (sym->count > 0 && peek(prs, 1)->type != TOK_LPAREN) {
+        if (sym->count > 0 && peek(prs, 1)->type != TOK_LPAREN && sym->type.type != TYPE_ALPHABETIC && sym->type.type != TYPE_ALPHANUMERIC) {
             log_error(prs->file, var_tok->ln, var_tok->col);
             fprintf(stderr, "moving into table '%s'\n", sym->name);
             show_error(prs->file, var_tok->ln, var_tok->col);
@@ -372,7 +374,7 @@ AST *parse_move(Parser *prs, size_t ln, size_t col) {
     }
 
     AST *ast = create_ast(AST_MOVE, ln, col);
-    ast->move.src = parse_value(prs, pictype);
+    ast->move.src = parse_value(prs, pictype.type);
 
     if (!expect_identifier(prs, "TO")) {
         eat_until(prs, TOK_DOT);
@@ -494,7 +496,7 @@ AST *parse_arithmetic(Parser *prs, char *name, size_t ln, size_t col) {
     return ast;
 }
 
-AST *parse_math(Parser *prs, AST *first, PictureType type) {
+AST *parse_math(Parser *prs, AST *first, unsigned int type) {
     if (first == NULL)
         first = parse_value(prs, TYPE_ANY);
 
@@ -689,7 +691,7 @@ AST *parse_compute(Parser *prs, size_t ln, size_t col) {
 
     AST *ast = create_ast(AST_COMPUTE, ln, col);
     ast->compute.dst = dst;
-    ast->compute.math = parse_math(prs, NULL, dst->var.sym->type);
+    ast->compute.math = parse_math(prs, NULL, dst->var.sym->type.type);
     return ast;
 }
 
@@ -713,7 +715,8 @@ bool validate_stmt(AST *stmt) {
         case AST_PERFORM_COUNT:
         case AST_PERFORM_VARYING:
         case AST_PERFORM_UNTIL:
-        case AST_CALL: break;
+        case AST_CALL:
+        case AST_STRING_BUILDER: break;
         default:
             log_error(stmt->file, stmt->ln, stmt->col);
             fprintf(stderr, "invalid clause '%s'\n", asttype_to_string(stmt->type));
@@ -1000,7 +1003,7 @@ AST *parse_perform(Parser *prs, size_t ln, size_t col) {
 }
 
 AST *parse_procedure(Parser *prs, char *name, size_t ln, size_t col) {
-    Variable *var = add_variable(prs->file, name, TYPE_ANY, 0);
+    Variable *var = add_variable(prs->file, name, (PictureType){ .type = TYPE_ANY, .count = 0 }, 0);
     var->is_label = true;
     var->is_index = false;
 
@@ -1080,7 +1083,7 @@ AST *parse_subscript(Parser *prs, AST *base) {
                 log_error(index->file, index->ln, index->col);
                 fprintf(stderr, "subscript variable '%s' is a table\n", index->var.name);
                 show_error(index->file, index->ln, index->col);
-            } else if (index->var.sym->type != TYPE_UNSIGNED_NUMERIC && index->var.sym->type != TYPE_SIGNED_NUMERIC) {
+            } else if (index->var.sym->type.type != TYPE_UNSIGNED_NUMERIC && index->var.sym->type.type != TYPE_SIGNED_NUMERIC) {
                 log_error(index->file, index->ln, index->col);
                 fprintf(stderr, "subscript variable '%s' is not numeric\n", index->var.name);
                 show_error(index->file, index->ln, index->col);
@@ -1146,7 +1149,7 @@ AST *parse_set(Parser *prs, size_t ln, size_t col) {
         ast->arithmetic.dst->var.name = name;
         ast->arithmetic.dst->var.sym = var;
         ast->arithmetic.implicit_giving = true;
-        ast->arithmetic.left = parse_value(prs, var->type);
+        ast->arithmetic.left = parse_value(prs, var->type.type);
         ast->arithmetic.right = ast->arithmetic.dst;
         return ast;
     }
@@ -1163,7 +1166,7 @@ AST *parse_set(Parser *prs, size_t ln, size_t col) {
     ast->move.dst = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
     ast->move.dst->var.name = name;
     ast->move.dst->var.sym = var;
-    ast->move.src = parse_value(prs, var->type);
+    ast->move.src = parse_value(prs, var->type.type);
     return ast;
 }
 
@@ -1191,6 +1194,89 @@ AST *parse_call(Parser *prs, size_t ln, size_t col) {
             astlist_push(&ast->call.args, parse_value(prs, TYPE_ANY));
         }
     }
+
+    if (strcmp(prs->tok->value, "RETURNING") == 0) {
+        eat(prs, TOK_ID);
+        ast->call.returning = parse_value(prs, TYPE_ANY);
+    } else
+        ast->call.returning = NULL;
+
+    return ast;
+}
+
+StringStatement parse_string_stmt(Parser *prs) {
+    AST *value = parse_value(prs, TYPE_ANY);
+
+    if (value->type == AST_VAR && value->var.sym->count > 0) {
+        log_error(value->file, value->ln, value->col);
+        fprintf(stderr, "table '%s' in string statement\n", value->var.name);
+        show_error(value->file, value->ln, value->col);
+    }
+
+    StringStatement stmt = (StringStatement){ .value = value, .delimit = 0 };
+
+    if (!expect_identifier(prs, "DELIMITED"))
+        return stmt;
+
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, "BY"))
+        return stmt;
+
+    eat(prs, TOK_ID);
+
+    if (strcmp(prs->tok->value, "SPACE") == 0)
+        stmt.delimit = DELIM_SPACE;
+    else if (strcmp(prs->tok->value, "SIZE") == 0)
+        stmt.delimit = DELIM_SIZE;
+    else {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "invalid delimiter '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+        return stmt;
+    }
+
+    eat(prs, TOK_ID);
+    return stmt;
+}
+
+AST *parse_string_builder(Parser *prs, size_t ln, size_t col) {
+    if (!expect_identifier(prs, NULL)) {
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    // (My apostraphe key died halfway through this comment)
+    // String manipulation in COBOL SUCKS. From what Ive seen,
+    // you start with a base value and delimit it, and then
+    // every other value you pass into it gets appended on,
+    // in accordance to its delimits and stuff.
+
+    AST *ast = create_ast(AST_STRING_BUILDER, ln, col);
+    ast->string_builder.base = parse_string_stmt(prs);
+    ast->string_builder.stmts = malloc(4 * sizeof(StringStatement));
+    ast->string_builder.stmt_count = 0;
+    ast->string_builder.stmt_cap = 4;
+
+    while (prs->tok->type != TOK_EOF && strcmp(prs->tok->value, "INTO") != 0 && strcmp(prs->tok->value, "END-STRING") != 0) {
+        StringStatement stmt = parse_string_stmt(prs);
+
+        if (ast->string_builder.stmt_count + 1 >= ast->string_builder.stmt_cap) {
+            ast->string_builder.stmt_cap *= 2;
+            ast->string_builder.stmts = realloc(ast->string_builder.stmts, ast->string_builder.stmt_cap * sizeof(StringStatement));
+        }
+
+        ast->string_builder.stmts[ast->string_builder.stmt_count++] = stmt;
+    }
+
+    if (expect_identifier(prs, "INTO")) {
+        eat(prs, TOK_ID);
+        ast->string_builder.into = parse_value(prs, TYPE_ANY);
+    } else
+        ast->string_builder.into = NOP(ln, col);
+
+    if (expect_identifier(prs, "END-STRING"))
+        eat(prs, TOK_ID);
 
     return ast;
 }
@@ -1300,6 +1386,9 @@ AST *parse_id(Parser *prs) {
     } else if (strcmp(id, "CALL") == 0) {
         free(id);
         return parse_call(prs, ln, col);
+    } else if (strcmp(id, "STRING") == 0) {
+        free(id);
+        return parse_string_builder(prs, ln, col);
     }
 
     // Constants.
@@ -1375,6 +1464,41 @@ AST *parse_constant(Parser *prs) {
     return ast;
 }
 
+/*
+unsigned int v99_to_num(Parser *prs) {
+    char *ptr = prs->tok->value;
+    char buffer[32];
+    size_t buffer_len = 0;
+
+    while (*ptr && buffer_len < 32) {
+        if (*ptr != 'V')
+            buffer[buffer_len++] = *ptr;
+
+        ptr++;
+    }
+
+    buffer[buffer_len] = '\0';
+
+    char *endptr;
+    errno = 0;
+    long num = strtol(buffer, &endptr, 10);
+
+    if (endptr == prs->tok->value || *endptr != '\0') {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "digit conversion failed\n");
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+        num = 1;
+    } else if (errno == ERANGE || errno == EINVAL) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "digit conversion failed: %s\n", strerror(errno));
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+        num = 1;
+    }
+
+    return num;
+}
+    */
+
 AST *parse_pic(Parser *prs) {
     if (!assert_in_section(prs, SECT_WORKING_STORAGE, prs->tok->ln, prs->tok->col))
         return NOP(prs->tok->ln, prs->tok->col);
@@ -1395,25 +1519,34 @@ AST *parse_pic(Parser *prs) {
     eat(prs, TOK_ID); // PIC
 
     // A = alphabetical, X = alphanumeric, 9 = numeric
-    PictureType type;
+    PictureType type = (PictureType){ .type = TYPE_ANY, .count = 0, .places = 1, .decimal_places = 0 };
+    bool implicit_count = false;
 
     if (strcmp(prs->tok->value, "A") == 0) {
-        type = TYPE_ALPHABETIC;
+        type.type = TYPE_ALPHABETIC;
         eat(prs, prs->tok->type);
     } else if (strcmp(prs->tok->value, "X") == 0) {
-        type = TYPE_ALPHANUMERIC;
+        type.type = TYPE_ALPHANUMERIC;
         eat(prs, prs->tok->type);
     } else if (strcmp(prs->tok->value, "9") == 0) {
-        type = TYPE_UNSIGNED_NUMERIC;
+        type.type = TYPE_UNSIGNED_NUMERIC;
         eat(prs, prs->tok->type);
+    } else if (strcmp(prs->tok->value, "9V9") == 0) {
+        type.type = TYPE_UNSIGNED_NUMERIC;
+        eat(prs, prs->tok->type);
+        implicit_count = true;
     } else if (strcmp(prs->tok->value, "S9") == 0) {
-        type = TYPE_SIGNED_NUMERIC;
+        type.type = TYPE_SIGNED_NUMERIC;
         eat(prs, prs->tok->type);
+    } else if (strcmp(prs->tok->value, "S9V9") == 0) {
+        type.type = TYPE_SIGNED_NUMERIC;
+        eat(prs, prs->tok->type);
+        implicit_count = true;
     } else {
         log_error(prs->file, prs->tok->ln, prs->tok->col);
         fprintf(stderr, "invalid picture type '%s'\n", prs->tok->value);
         show_error(prs->file, prs->tok->ln, prs->tok->col);
-        type = TYPE_ALPHANUMERIC;
+        type.type = TYPE_ALPHANUMERIC;
     }
 
     ast->pic.level = level->constant.i32;
@@ -1421,8 +1554,9 @@ AST *parse_pic(Parser *prs) {
     ast->pic.name = name;
     ast->pic.type = type;
     ast->pic.is_index = false;
+    ast->pic.count = 0;
 
-    if (prs->tok->type == TOK_LPAREN) {
+    if (prs->tok->type == TOK_LPAREN && !implicit_count) {
         eat(prs, TOK_LPAREN);
 
         if (prs->tok->type != TOK_INT) {
@@ -1431,39 +1565,68 @@ AST *parse_pic(Parser *prs) {
             show_error(prs->file, prs->tok->ln, prs->tok->col);
 
             eat_until(prs, TOK_DOT);
-            ast->pic.count = 0;
-        } else if (type == TYPE_SIGNED_NUMERIC || type == TYPE_UNSIGNED_NUMERIC) {
-            // Currently, we don't care if numbers are just PIC 9 or have a length.
-            // Just ignore it for now.
-            // TODO: This maybe.
-            eat_until(prs, TOK_RPAREN);
-            ast->pic.count = 0;
         } else {
             AST *size = parse_constant(prs);
-            ast->pic.count = (unsigned int)size->constant.i32;
+
+            if (size->constant.i32 < 1) {
+                log_error(size->file, size->ln, size->col);
+                fprintf(stderr, "found place count '%d' but minimum place count is 1\n", size->constant.i32);
+                show_error(size->file, size->ln, size->col);
+            } else
+                ast->pic.type.places = (unsigned int)size->constant.i32;
+
             delete_ast(size);
+
+            // Strings are kinda like tables so the place count is the character count yk.
+            if (type.type == TYPE_ALPHABETIC || type.type == TYPE_ALPHANUMERIC)
+                ast->pic.type.count = ast->pic.type.places;
         }
 
         eat(prs, TOK_RPAREN);
-    } else
-        ast->pic.count = 0;
+    }
 
-    if (prs->tok->type == TOK_ID && prs->tok->value[0] == 'V' && strcmp(prs->tok->value, "VALUE") != 0) {
-        // TODO: Actually specify decimal points with V?
-        eat(prs, TOK_ID);
-
-        if (type != TYPE_SIGNED_NUMERIC) {
+    if (strcmp(prs->tok->value, "V9") == 0 || implicit_count) {
+        if (type.type != TYPE_SIGNED_NUMERIC) {
             log_error(prs->file, ast->ln, ast->col);
             fprintf(stderr, "declaring variable '%s' with decimal points but it is unsigned\n", name);
             show_error(prs->file, ast->ln, ast->col);
         }
 
-        ast->pic.type = TYPE_DECIMAL_NUMERIC;
+        ast->pic.type.type = TYPE_DECIMAL_NUMERIC;
+
+        if (!implicit_count)
+            eat(prs, TOK_ID);
+
+        if (prs->tok->type == TOK_LPAREN) {
+            eat(prs, TOK_LPAREN);
+
+            AST *size = parse_constant(prs);
+            ast->pic.type.decimal_places = (unsigned int)size->constant.i32;
+            delete_ast(size);
+
+            eat(prs, TOK_RPAREN);
+
+            if (ast->pic.type.decimal_places < 1) {
+                log_error(prs->file, prs->tok->ln, prs->tok->col);
+                fprintf(stderr, "found place count '%d' but minimum place count is 1\n", ast->pic.type.decimal_places);
+                show_error(prs->file, prs->tok->ln, prs->tok->col);
+            }
+        } else
+            ast->pic.type.decimal_places = 1;
     }
 
     if (strcmp(prs->tok->value, "VALUE") == 0) {
         eat(prs, TOK_ID);
-        ast->pic.value = parse_value(prs, type);
+        AST *value = parse_value(prs, type.type);
+        ast->pic.value = value;
+
+        if (value->type == AST_STRING && (ast->pic.type.type == TYPE_ALPHABETIC || ast->pic.type.type == TYPE_ALPHANUMERIC) &&
+                strlen(value->constant.string) > ast->pic.type.count) {
+
+            log_error(value->file, value->ln, value->col);
+            fprintf(stderr, "value string of length %zu exceeds place count of %u in variable '%s'\n", strlen(value->constant.string), ast->pic.type.count, name);
+            show_error(value->file, value->ln, value->col);
+        }
     } else
         ast->pic.value = NULL;
 
@@ -1515,7 +1678,7 @@ AST *parse_pic(Parser *prs) {
                 pic->pic.value = create_ast(AST_INT, prs->tok->ln, prs->tok->col);
                 pic->pic.value->constant.i32 = 1;
 
-                pic->pic.type = TYPE_UNSIGNED_NUMERIC;
+                pic->pic.type.type = TYPE_UNSIGNED_NUMERIC;
                 pic->pic.count = 0;
                 pic->pic.is_index = true;
 

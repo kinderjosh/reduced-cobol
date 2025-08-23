@@ -1,0 +1,12 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. TESTPROG.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 WS-NAME PIC A(32) VALUE "John".
+       PROCEDURE DIVISION.
+           STRING WS-NAME DELIMITED BY SPACE
+               " Smith" DELIMITED BY SIZE
+               INTO WS-NAME
+           END-STRING.
+           DISPLAY WS-NAME.
+           STOP RUN.

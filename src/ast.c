@@ -115,6 +115,18 @@ void delete_ast(AST *ast) {
         case AST_CALL:
             free(ast->call.name);
             delete_astlist(&ast->call.args);
+
+            if (ast->call.returning != NULL)
+                delete_ast(ast->call.returning);
+            break;
+        case AST_STRING_BUILDER:
+            delete_ast(ast->string_builder.base.value);
+
+            for (size_t i = 0; i < ast->string_builder.stmt_count; i++)
+                delete_ast(ast->string_builder.stmts[i].value);
+
+            free(ast->string_builder.stmts);
+            delete_ast(ast->string_builder.into);
             break;
         default: break;
     }
@@ -155,6 +167,7 @@ char *asttype_to_string(ASTType type) {
         case AST_CALL: return "call";
         case AST_NULL: return "null";
         case AST_BOOL: return "bool";
+        case AST_STRING_BUILDER: return "string";
         default: break;
     }
 

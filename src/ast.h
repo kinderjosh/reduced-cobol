@@ -6,13 +6,19 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-typedef enum {
-    TYPE_ANY,
-    TYPE_ALPHABETIC,
-    TYPE_ALPHANUMERIC,
-    TYPE_SIGNED_NUMERIC,
-    TYPE_UNSIGNED_NUMERIC,
-    TYPE_DECIMAL_NUMERIC
+typedef struct {
+    enum {
+        TYPE_ANY,
+        TYPE_ALPHABETIC,
+        TYPE_ALPHANUMERIC,
+        TYPE_SIGNED_NUMERIC,
+        TYPE_UNSIGNED_NUMERIC,
+        TYPE_DECIMAL_NUMERIC
+    } type;
+
+    unsigned int places;
+    unsigned int decimal_places; // Only for floats.
+    unsigned int count;
 } PictureType;
 
 typedef struct {
@@ -55,7 +61,8 @@ typedef enum {
     AST_SUBSCRIPT,
     AST_CALL,
     AST_NULL,
-    AST_BOOL
+    AST_BOOL,
+    AST_STRING_BUILDER
 } ASTType;
 
 typedef struct AST AST;
@@ -65,6 +72,15 @@ typedef struct ASTList {
     size_t size;
     size_t capacity;
 } ASTList;
+
+typedef struct {
+    AST *value;
+
+    enum {
+        DELIM_SPACE,
+        DELIM_SIZE
+    } delimit;
+} StringStatement;
 
 typedef struct AST {
     ASTType type;
@@ -175,9 +191,18 @@ typedef struct AST {
         struct {
             char *name;
             ASTList args;
+            AST *returning;
         } call;
         
         bool bool_value;
+
+        struct {
+            StringStatement base;
+            StringStatement *stmts;
+            size_t stmt_count;
+            size_t stmt_cap;
+            AST *into;
+        } string_builder;
     };
 } AST;
 

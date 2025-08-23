@@ -7,7 +7,7 @@
        01 B PIC S9(02) VALUE 4.
        01 C PIC S9(02).
       * A floating point.
-       01 RESULT PIC S9(04)V99.
+       01 RESULT PIC S9(02)V9(02).
        PROCEDURE DIVISION.
       * Process simple arithmetic using intrinsics.
            ADD 5 TO A.
