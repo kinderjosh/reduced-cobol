@@ -23,9 +23,7 @@ typedef struct {
     size_t token_count;
     Token *tok;
     size_t pos;
-    Division cur_division;
-    Section cur_section;
-    char *cur_program;
+    char program_id[65];
 } Parser;
 
 AST *parse_file(char *file);

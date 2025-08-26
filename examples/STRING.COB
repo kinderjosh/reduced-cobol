@@ -3,6 +3,7 @@
        DATA DIVISION.
        WORKING-STORAGE SECTION.
        01 WS-NAME PIC A(32) VALUE "John".
+       01 WS-LENGTH PIC 9(02).
        PROCEDURE DIVISION.
       * Concatenate " Smith" onto WS-NAME to make "John Smith".
 
@@ -14,9 +15,11 @@
                " Smith" DELIMITED BY SIZE
       * Store the result string into WS-NAME.
                INTO WS-NAME
+      * Store the length of the result string in WS-LENGTH.
+               WITH POINTER WS-LENGTH
            END-STRING.
 
-      * Display the full name.
-           DISPLAY WS-NAME.
+      * Display the full name and its length.
+           DISPLAY "'" WS-NAME "' is " WS-LENGTH " characters long".
 
            STOP RUN.

@@ -87,7 +87,7 @@ Parser create_parser(char *file) {
     // Add the EOF.
     tokens[token_count++] = tok;
     delete_lexer(&lex);
-    return (Parser){ .file = file, .tokens = tokens, .token_count = token_count, .tok = &tokens[0], .pos = 0, .cur_division = DIV_NONE, .cur_program = NULL };
+    return (Parser){ .file = file, .tokens = tokens, .token_count = token_count, .tok = &tokens[0], .pos = 0, .program_id = {0} };
 }
 
 void delete_parser(Parser *prs) {
@@ -95,9 +95,6 @@ void delete_parser(Parser *prs) {
         delete_token(&prs->tokens[i]);
 
     free(prs->tokens);
-
-    if (prs->cur_program != NULL)
-        free(prs->cur_program);
 }
 
 static void eat(Parser *prs, TokenType type) {
@@ -183,58 +180,6 @@ fallthrough:
     return value;
 }
 
-bool assert_in_division(Parser *prs, Division div, size_t ln, size_t col) {
-    char *str = "NONE";
-
-    if (div == DIV_IDENTIFICATION)
-        str = "IDENTIFICATION";
-    else if (div == DIV_DATA)
-        str = "DATA";
-    else if (div == DIV_PROCEDURE)
-        str = "PROCEDURE";
-
-    if (prs->cur_division != div) {
-        log_error(prs->file, ln, col);
-        fprintf(stderr, "invalid clause outside of %s DIVISION\n", str);
-        show_error(prs->file, ln, col);
-        eat_until(prs, TOK_DOT); // Next statement.
-        return false;
-    }
-
-    return true;
-}
-
-void parse_division(Parser *prs, char *div) {
-    if (strcmp(div, "IDENTIFICATION") == 0)
-        prs->cur_division = DIV_IDENTIFICATION;
-    else if (strcmp(div, "DATA") == 0)
-        prs->cur_division = DIV_DATA;
-    else if (strcmp(div, "PROCEDURE") == 0)
-        prs->cur_division = DIV_PROCEDURE;
-}
-
-bool assert_in_section(Parser *prs, Section sect, size_t ln, size_t col) {
-    char *str = "NONE";
-
-    if (sect == SECT_WORKING_STORAGE)
-        str = "WORKING-STORAGE";
-
-    if (prs->cur_section != sect) {
-        log_error(prs->file, ln, col);
-        fprintf(stderr, "invalid clause outside of %s SECTION\n", str);
-        show_error(prs->file, ln, col);
-        eat_until(prs, TOK_DOT); // Next statement.
-        return false;
-    }
-
-    return true;
-}
-
-void parse_section(Parser *prs, char *sect) {
-    if (strcmp(sect, "WORKING-STORAGE") == 0)
-        prs->cur_section = SECT_WORKING_STORAGE;
-}
-
 // TOFIX: I really don't like how gross and builtin this shit is.
 AST *parse_any_no_error(Parser *prs) {
     if (prs->tok->type == TOK_INT || prs->tok->type == TOK_FLOAT || prs->tok->type == TOK_STRING)
@@ -255,10 +200,14 @@ AST *parse_any_no_error(Parser *prs) {
 }
 
 static bool displayed_previously;
+static bool first_display;
 
-AST *parse_display(Parser *prs, size_t ln, size_t col, ASTList *root) {
-    if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
-        return NOP(ln, col);
+AST *parse_display(Parser *prs, ASTList *root) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+
+    if (first_display) // Recursive function, only eat DISPLAY the first time.
+        eat(prs, TOK_ID);
 
     size_t before = prs->pos;
     AST *thing = parse_any_no_error(prs);
@@ -317,12 +266,14 @@ AST *parse_display(Parser *prs, size_t ln, size_t col, ASTList *root) {
     bruh->display.add_newline = false;
     astlist_push(root, bruh);
 
-    return parse_display(prs, ln, col, root);
+    first_display = false;
+    return parse_display(prs, root);
 }
 
-AST *parse_move(Parser *prs, size_t ln, size_t col) {
-    if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
-        return NOP(ln, col);
+AST *parse_move(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+    eat(prs, TOK_ID);
 
     PictureType pictype = { .type = TYPE_ANY, .count = 0 };
     Token *var_tok = peek(prs, 2);
@@ -394,11 +345,13 @@ AST *parse_move(Parser *prs, size_t ln, size_t col) {
     return ast;
 }
 
-AST *parse_arithmetic(Parser *prs, char *name, size_t ln, size_t col) {
-    if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
-        return NOP(ln, col);
+AST *parse_arithmetic(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
 
-    // TODO: Probably type this somehow.
+    char *name = mystrdup(prs->tok->value);
+    eat(prs, TOK_ID);
+
     AST *value = parse_value(prs, TYPE_ANY);
 
     if (strcmp(name, "ADD") == 0 && !expect_identifier(prs, "TO")) {
@@ -671,9 +624,10 @@ AST *parse_condition(Parser *prs, AST *first) {
     return ast;
 }
 
-AST *parse_compute(Parser *prs, size_t ln, size_t col) {
-    if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
-        return NOP(ln, col);
+AST *parse_compute(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+    eat(prs, TOK_ID);
 
     AST *dst = parse_value(prs, TYPE_ANY);
 
@@ -716,7 +670,9 @@ bool validate_stmt(AST *stmt) {
         case AST_PERFORM_VARYING:
         case AST_PERFORM_UNTIL:
         case AST_CALL:
-        case AST_STRING_BUILDER: break;
+        case AST_STRING_BUILDER:
+        case AST_OPEN:
+        case AST_CLOSE: break;
         default:
             log_error(stmt->file, stmt->ln, stmt->col);
             fprintf(stderr, "invalid clause '%s'\n", asttype_to_string(stmt->type));
@@ -727,9 +683,12 @@ bool validate_stmt(AST *stmt) {
     return true;
 }
 
-AST *parse_if(Parser *prs, size_t ln, size_t col) {
-    if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
-        return NOP(ln, col);
+AST *parse_procedure_stmt(Parser *prs, ASTList *root);
+
+AST *parse_if(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+    eat(prs, TOK_ID);
 
     AST *condition = parse_condition(prs, NULL);
 
@@ -742,7 +701,7 @@ AST *parse_if(Parser *prs, size_t ln, size_t col) {
     ASTList body = create_astlist();
 
     while (prs->tok->type != TOK_EOF && strcmp(prs->tok->value, "END-IF") != 0 && strcmp(prs->tok->value, "ELSE") != 0) {
-        AST *stmt = parse_stmt(prs);
+        AST *stmt = parse_procedure_stmt(prs, &body);
 
         if (validate_stmt(stmt))
             astlist_push(&body, stmt);
@@ -762,7 +721,7 @@ AST *parse_if(Parser *prs, size_t ln, size_t col) {
     eat(prs, TOK_ID);
 
     while (prs->tok->type != TOK_EOF && strcmp(prs->tok->value, "END-IF") != 0) {
-        AST *stmt = parse_stmt(prs);
+        AST *stmt = parse_procedure_stmt(prs, &ast->if_stmt.else_body);
 
         if (validate_stmt(stmt))
             astlist_push(&ast->if_stmt.else_body, stmt);
@@ -774,11 +733,9 @@ AST *parse_if(Parser *prs, size_t ln, size_t col) {
     return ast;
 }
 
-AST *parse_not(Parser *prs, size_t ln, size_t col) {
-    if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
-        return NOP(ln, col);
-
-    AST *ast = create_ast(AST_NOT, ln, col);
+AST *parse_not(Parser *prs) {
+    AST *ast = create_ast(AST_NOT, prs->tok->ln, prs->tok->col);
+    eat(prs, TOK_ID);
     ast->not_value = parse_value(prs, TYPE_ANY);
     return ast;
 }
@@ -892,7 +849,7 @@ AST *parse_perform_varying(Parser *prs, size_t ln, size_t col) {
     ast->perform_varying.body = create_astlist();
 
     while (prs->tok->type != TOK_EOF && strcmp(prs->tok->value, "END-PERFORM") != 0) {
-        AST *stmt = parse_stmt(prs);
+        AST *stmt = parse_procedure_stmt(prs, &ast->perform_varying.body);
 
         if (validate_stmt(stmt))
             astlist_push(&ast->perform_varying.body, stmt);
@@ -911,7 +868,7 @@ AST *parse_perform_until(Parser *prs, size_t ln, size_t col) {
     ast->perform_until.body = create_astlist();
 
     while (prs->tok->type != TOK_EOF && strcmp(prs->tok->value, "END-PERFORM") != 0) {
-        AST *stmt = parse_stmt(prs);
+        AST *stmt = parse_procedure_stmt(prs, &ast->perform_until.body);
 
         if (validate_stmt(stmt))
             astlist_push(&ast->perform_until.body, stmt);
@@ -924,7 +881,11 @@ AST *parse_perform_until(Parser *prs, size_t ln, size_t col) {
     return ast;
 }
 
-AST *parse_perform(Parser *prs, size_t ln, size_t col) {
+AST *parse_perform(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+    eat(prs, TOK_ID);
+
     if (strcmp(prs->tok->value, "VARYING") == 0)
         return parse_perform_varying(prs, ln, col);
     else if (strcmp(prs->tok->value, "UNTIL") == 0)
@@ -1002,7 +963,13 @@ AST *parse_perform(Parser *prs, size_t ln, size_t col) {
     */
 }
 
-AST *parse_procedure(Parser *prs, char *name, size_t ln, size_t col) {
+AST *parse_procedure(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+
+    char *name = mystrdup(prs->tok->value);
+    eat(prs, TOK_ID);
+
     Variable *var = add_variable(prs->file, name, (PictureType){ .type = TYPE_ANY, .count = 0 }, 0);
     var->is_label = true;
     var->is_index = false;
@@ -1023,13 +990,13 @@ AST *parse_procedure(Parser *prs, char *name, size_t ln, size_t col) {
         AST *stmt;
         
         if (strcmp(prs->tok->value, "DISPLAY") == 0) {
-            eat(prs, TOK_ID);
+            first_display = true;
 
             // DISPLAY can push arguments to the root, so we need to
             // specify to push into the procedure body instead.
-            stmt = parse_display(prs, prs->tok->ln, prs->tok->col, &ast->proc.body);
+            stmt = parse_display(prs, &ast->proc.body);
         } else
-            stmt = parse_stmt(prs);
+            stmt = parse_procedure_stmt(prs, &ast->proc.body);
 
         if (validate_stmt(stmt))
             astlist_push(&ast->proc.body, stmt);
@@ -1108,7 +1075,11 @@ AST *parse_subscript(Parser *prs, AST *base) {
     return ast;
 }
 
-AST *parse_set(Parser *prs, size_t ln, size_t col) {
+AST *parse_set(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+    eat(prs, TOK_ID);
+
     Variable *var = find_variable(prs->file, prs->tok->value);
 
     if (!var->used) {
@@ -1170,7 +1141,11 @@ AST *parse_set(Parser *prs, size_t ln, size_t col) {
     return ast;
 }
 
-AST *parse_call(Parser *prs, size_t ln, size_t col) {
+AST *parse_call(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+    eat(prs, TOK_ID);
+
     if (prs->tok->type != TOK_STRING) {
         log_error(prs->file, prs->tok->ln, prs->tok->col);
         fprintf(stderr, "expected string for function to call but found '%s'\n", tokentype_to_string(prs->tok->type));
@@ -1240,7 +1215,11 @@ StringStatement parse_string_stmt(Parser *prs) {
     return stmt;
 }
 
-AST *parse_string_builder(Parser *prs, size_t ln, size_t col) {
+AST *parse_string_builder(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+    eat(prs, TOK_ID);
+
     if (!expect_identifier(prs, NULL)) {
         eat_until(prs, TOK_DOT);
         return NOP(ln, col);
@@ -1275,9 +1254,153 @@ AST *parse_string_builder(Parser *prs, size_t ln, size_t col) {
     } else
         ast->string_builder.into = NOP(ln, col);
 
+    if (strcmp(prs->tok->value, "WITH") == 0 && strcmp(peek(prs, 1)->value, "POINTER") == 0) {
+        eat(prs, TOK_ID);
+        eat(prs, TOK_ID);
+
+        if (!expect_identifier(prs, NULL)) {
+            eat_until(prs, TOK_DOT);
+            ast->string_builder.with_pointer = NULL;
+            return ast;
+        }
+
+        Variable *var = find_variable(prs->file, prs->tok->value);
+
+        if (!var->used) {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "undefined variable '%s'\n", prs->tok->value);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+            eat_until(prs, TOK_DOT);
+            ast->string_builder.with_pointer = NULL;
+            return ast;
+        } else if (var->type.type != TYPE_DECIMAL_NUMERIC && var->type.type != TYPE_SIGNED_NUMERIC && var->type.type != TYPE_UNSIGNED_NUMERIC) {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "string pointer variable '%s' has a non-numeric picture type\n", prs->tok->value);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+            eat_until(prs, TOK_DOT);
+            ast->string_builder.with_pointer = NULL;
+            return ast;
+        } else if (var->type.count > 0) {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "string pointer variable '%s' is a table\n", prs->tok->value);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+            eat_until(prs, TOK_DOT);
+            ast->string_builder.with_pointer = NULL;
+            return ast;
+        }
+
+        ast->string_builder.with_pointer = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
+        ast->string_builder.with_pointer->var.name = mystrdup(prs->tok->value);
+        ast->string_builder.with_pointer->var.sym = var;
+        eat(prs, TOK_ID);
+    } else
+        ast->string_builder.with_pointer = NULL;
+
     if (expect_identifier(prs, "END-STRING"))
         eat(prs, TOK_ID);
 
+    return ast;
+}
+
+AST *parse_open(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, NULL)) {
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    unsigned int open_type = 0;
+
+    if (strcmp(prs->tok->value, "INPUT") == 0)
+        open_type = OPEN_INPUT;
+    else if (strcmp(prs->tok->value, "OUTPUT") == 0)
+        open_type = OPEN_OUTPUT;
+    else if (strcmp(prs->tok->value, "IO") == 0)
+        open_type = OPEN_IO;
+    else if (strcmp(prs->tok->value, "EXTEND") == 0)
+        open_type = OPEN_EXTEND;
+    else {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "invalid opening mode '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, NULL)) {
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    Variable *var = find_variable(prs->file, prs->tok->value);
+
+    if (!var->used) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "undefined variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    } else if ((var->type.type != TYPE_ALPHABETIC && var->type.type != TYPE_ALPHANUMERIC) || var->type.count == 0) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "invalid picture type for string filename '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    AST *ast = create_ast(AST_OPEN, ln, col);
+    ast->open.type = open_type;
+    ast->open.filename = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
+    ast->open.filename->var.name = mystrdup(prs->tok->value);
+    ast->open.filename->var.sym = var;
+    eat(prs, TOK_ID);
+    return ast;
+}
+
+AST *parse_close(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, NULL)) {
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    Variable *var = find_variable(prs->file, prs->tok->value);
+
+    if (!var->used) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "undefined variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    } else if ((var->type.type != TYPE_ALPHABETIC && var->type.type != TYPE_ALPHANUMERIC) || var->type.count == 0) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "invalid picture type for string filename '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    AST *ast = create_ast(AST_CLOSE, ln, col);
+    ast->close_filename = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
+    ast->close_filename->var.name = mystrdup(prs->tok->value);
+    ast->close_filename->var.sym = var;
+    eat(prs, TOK_ID);
     return ast;
 }
 
@@ -1285,149 +1408,106 @@ AST *parse_id(Parser *prs) {
     const size_t ln = prs->tok->ln;
     const size_t col = prs->tok->col;
 
-    char *id = mystrdup(prs->tok->value);
-    eat(prs, TOK_ID);
-
-    // Divisions.
-    if (strcmp(id, "IDENTIFICATION") == 0 || strcmp(id, "PROCEDURE") == 0 || strcmp(id, "DATA") == 0) {
-        if (expect_identifier(prs, "DIVISION")) {
-            eat(prs, TOK_ID);
-            parse_division(prs, id);
-        }
-        
-        free(id);
-        return NOP(ln, col);
-    }
-
-    // Sections.
-    if (strcmp(id, "WORKING-STORAGE") == 0) {
-        if (!assert_in_division(prs, DIV_DATA, ln, col))
-            return NOP(ln, col);
-
-        if (expect_identifier(prs, "SECTION")) {
-            eat(prs, TOK_ID);
-            parse_section(prs, id);
-        }
-        
-        free(id);
-        return NOP(ln, col);
-    }
-
-    // Identifications.
-    else if (strcmp(id, "PROGRAM-ID") == 0) {
-        free(id);
-
-        if (!assert_in_division(prs, DIV_IDENTIFICATION, ln, col))
-            return NOP(ln, col);
-
-        if (prs->tok->type == TOK_DOT)
-            eat(prs, TOK_DOT);
-
-        if (expect_identifier(prs, NULL)) {
-            prs->cur_program = mystrdup(prs->tok->value);
-            eat(prs, TOK_ID);
-        }
-
-        return NOP(ln, col);
-    }
-
-    // Intrinsics.
-    else if (strcmp(id, "STOP") == 0) {
-        free(id);
-
-        if (!assert_in_division(prs, DIV_PROCEDURE, ln, col))
-            return NOP(ln, col);
-        
-        if (expect_identifier(prs, "RUN")) {
-            eat(prs, TOK_ID);
-            return create_ast(AST_STOP, ln, col);
-        }
-
-        return NOP(ln, col);
-    } else if (strcmp(id, "DISPLAY") == 0) {
-        free(id);
-        displayed_previously = false;
-        return parse_display(prs, ln, col, root_ptr);
-    } else if (strcmp(id, "MOVE") == 0) {
-        free(id);
-        return parse_move(prs, ln, col);
-    } else if (strcmp(id, "ADD") == 0 || strcmp(id, "SUBTRACT") == 0 || strcmp(id, "MULTIPLY") == 0 || strcmp(id, "DIVIDE") == 0)
-        return parse_arithmetic(prs, id, ln, col);
-    else if (strcmp(id, "COMPUTE") == 0) {
-        free(id);
-        return parse_compute(prs, ln, col);
-    } else if (strcmp(id, "IF") == 0) {
-        free(id);
-        return parse_if(prs, ln, col);
-    } else if (strcmp(id, "NOT") == 0) {
-        free(id);
-        return parse_not(prs, ln, col);
-    //} else if (strcmp(id, "GO") == 0) {
-      //  free(id);
-        //return parse_goto(prs, ln, col);
-    } else if (strcmp(id, "END") == 0) {
-        free(id);
-
-        if (!expect_identifier(prs, "PROGRAM"))
-            return NOP(ln, col);
-
+    if (strcmp(prs->tok->value, "NULL") == 0) {
         eat(prs, TOK_ID);
-
-        if (expect_identifier(prs, prs->cur_program))
-            eat(prs, TOK_ID);
-
-        return NOP(ln, col);
-    } else if (strcmp(id, "PERFORM") == 0) {
-        free(id);
-        return parse_perform(prs, ln, col);
-    } else if (strcmp(id, "SET") == 0) {
-        free(id);
-        return parse_set(prs, ln, col);
-    } else if (strcmp(id, "CALL") == 0) {
-        free(id);
-        return parse_call(prs, ln, col);
-    } else if (strcmp(id, "STRING") == 0) {
-        free(id);
-        return parse_string_builder(prs, ln, col);
-    }
-
-    // Constants.
-    else if (strcmp(id, "NULL") == 0) {
-        free(id);
         return create_ast(AST_NULL, ln, col);
-    } else if (strcmp(id, "TRUE") == 0 || strcmp(id, "FALSE") == 0) {
+    } else if (strcmp(prs->tok->value, "TRUE") == 0 || strcmp(prs->tok->value, "FALSE") == 0) {
         AST *ast = create_ast(AST_NULL, ln, col);
-        ast->bool_value = strcmp(id, "TRUE") == 0;
-        free(id);
+        ast->bool_value = strcmp(prs->tok->value, "TRUE") == 0;
+        eat(prs, TOK_ID);
         return ast;
     }
 
-    // User-defined stuff.
     Variable *sym;
 
-    if ((sym = find_variable(prs->file, id))->used) {
+    if ((sym = find_variable(prs->file, prs->tok->value))->used) {
         if (sym->is_label) {
             AST *ast = create_ast(AST_LABEL, ln, col);
-            ast->label = id;
+            ast->label = mystrdup(prs->tok->value);
+            eat(prs, TOK_ID);
             return ast;
         }
 
         AST *ast = create_ast(AST_VAR, ln, col);
-        ast->var.name = id;
+        ast->var.name = mystrdup(prs->tok->value);
         ast->var.sym = sym;
+        eat(prs, TOK_ID);
 
         if (prs->tok->type == TOK_LPAREN)
             return parse_subscript(prs, ast);
 
         return ast;
-    } else if (prs->cur_division == DIV_PROCEDURE && prs->tok->type == TOK_DOT)
-        return parse_procedure(prs, id, ln, col);
+    }
 
     log_error(prs->file, ln, col);
-    fprintf(stderr, "undefined identifier '%s'\n", id);
+    fprintf(stderr, "undefined identifier '%s'\n", prs->tok->value);
     show_error(prs->file, ln, col);
-    free(id);
+    eat(prs, TOK_ID);
     return NOP(ln, col);
+}
+
+AST *parse_procedure_stmt(Parser *prs, ASTList *root) {
+    if (prs->tok->type == TOK_ID && peek(prs, 1)->type == TOK_DOT)
+        return parse_procedure(prs);
+
+    while (prs->tok->type == TOK_DOT)
+        eat(prs, TOK_DOT);
+
+    if (prs->tok->type == TOK_EOF)
+        return NOP(prs->tok->ln, prs->tok->col);
+
+    if (strcmp(prs->tok->value, "STOP") == 0) {
+        eat(prs, TOK_ID);
+
+        if (expect_identifier(prs, "RUN"))
+            eat(prs, TOK_ID);
+
+        return create_ast(AST_STOP, prs->tok->ln, prs->tok->col);
+    } else if (strcmp(prs->tok->value, "DISPLAY") == 0) {
+        displayed_previously = false;
+        first_display = true;
+        return parse_display(prs, root);
+    } else if (strcmp(prs->tok->value, "MOVE") == 0)
+        return parse_move(prs);
+    else if (strcmp(prs->tok->value, "ADD") == 0 || strcmp(prs->tok->value, "SUBTRACT") == 0 || 
+            strcmp(prs->tok->value, "MULTIPLY") == 0 || strcmp(prs->tok->value, "DIVIDE") == 0)
+        return parse_arithmetic(prs);
+    else if (strcmp(prs->tok->value, "COMPUTE") == 0)
+        return parse_compute(prs);
+    else if (strcmp(prs->tok->value, "IF") == 0)
+        return parse_if(prs);
+    else if (strcmp(prs->tok->value, "NOT") == 0)
+        return parse_not(prs);
+    else if (strcmp(prs->tok->value, "END") == 0) {
+        eat(prs, TOK_ID);
+
+        if (expect_identifier(prs, "PROGRAM")) {
+            eat(prs, TOK_ID);
+
+            if (expect_identifier(prs, prs->program_id))
+                eat(prs, TOK_ID);
+        } else
+            eat_until(prs, TOK_DOT);
+
+        return NOP(prs->tok->ln, prs->tok->col);
+    } else if (strcmp(prs->tok->value, "PERFORM") == 0)
+        return parse_perform(prs);
+    else if (strcmp(prs->tok->value, "SET") == 0)
+        return parse_set(prs);
+    else if (strcmp(prs->tok->value, "CALL") == 0)
+        return parse_call(prs);
+    else if (strcmp(prs->tok->value, "STRING") == 0)
+        return parse_string_builder(prs);
+    else if (strcmp(prs->tok->value, "OPEN") == 0)
+        return parse_open(prs);
+    else if (strcmp(prs->tok->value, "CLOSE") == 0)
+        return parse_close(prs);
+
+    log_error(prs->file, prs->tok->ln, prs->tok->col);
+    fprintf(stderr, "invalid clause '%s' in PROCEDURE DIVISION\n", prs->tok->value);
+    show_error(prs->file, prs->tok->ln, prs->tok->col);
+    eat_until(prs, TOK_DOT);
+    return NOP(prs->tok->ln, prs->tok->col);
 }
 
 AST *parse_constant(Parser *prs) {
@@ -1500,10 +1580,6 @@ unsigned int v99_to_num(Parser *prs) {
     */
 
 AST *parse_pic(Parser *prs) {
-    if (!assert_in_section(prs, SECT_WORKING_STORAGE, prs->tok->ln, prs->tok->col))
-        return NOP(prs->tok->ln, prs->tok->col);
-
-    assert(prs->tok->type == TOK_INT);
     AST *level = parse_constant(prs);
 
     if (level->constant.i32 < 1 || level->constant.i32 > 49) {
@@ -1584,7 +1660,7 @@ AST *parse_pic(Parser *prs) {
 
         eat(prs, TOK_RPAREN);
     }
-
+ 
     if (strcmp(prs->tok->value, "V9") == 0 || implicit_count) {
         if (type.type != TYPE_SIGNED_NUMERIC) {
             log_error(prs->file, ast->ln, ast->col);
@@ -1657,36 +1733,37 @@ AST *parse_pic(Parser *prs) {
 
             eat(prs, TOK_ID);
 
-            if (expect_identifier(prs, NULL)) {
-                Variable *index_var = find_variable(prs->file, prs->tok->value);
+            if (!expect_identifier(prs, NULL))
+                goto done;
 
-                // TODO: Add file/ln/col info to Variable for logging stuff you idiot?
-                if (index_var->used) {
-                    log_error(prs->file, prs->tok->ln, prs->tok->col);
-                    fprintf(stderr, "redefinition of index variable '%s'\n", prs->tok->value);
-                    show_error(prs->file, prs->tok->ln, prs->tok->col);
-                    eat(prs, TOK_ID);
-                    goto done;
-                }
+            Variable *index_var = find_variable(prs->file, prs->tok->value);
 
-
-                AST *pic = create_ast(AST_PIC, prs->tok->ln, prs->tok->col);
-                pic->pic.name = mystrdup(prs->tok->value);
-                pic->pic.level = ast->pic.level;
-
-                // Initialize to first index = 1.
-                pic->pic.value = create_ast(AST_INT, prs->tok->ln, prs->tok->col);
-                pic->pic.value->constant.i32 = 1;
-
-                pic->pic.type.type = TYPE_UNSIGNED_NUMERIC;
-                pic->pic.count = 0;
-                pic->pic.is_index = true;
-
-                Variable *var = add_variable(pic->file, pic->pic.name, pic->pic.type, pic->pic.count);
-                var->is_index = true;
+            // TODO: Add file/ln/col info to Variable for logging stuff you idiot?
+            if (index_var->used) {
+                log_error(prs->file, prs->tok->ln, prs->tok->col);
+                fprintf(stderr, "redefinition of index variable '%s'\n", prs->tok->value);
+                show_error(prs->file, prs->tok->ln, prs->tok->col);
                 eat(prs, TOK_ID);
-                astlist_push(root_ptr, pic);
+                goto done;
             }
+
+            AST *pic = create_ast(AST_PIC, prs->tok->ln, prs->tok->col);
+            pic->pic.name = mystrdup(prs->tok->value);
+            pic->pic.level = ast->pic.level;
+
+            // Initialize to first index = 1.
+            pic->pic.value = create_ast(AST_INT, prs->tok->ln, prs->tok->col);
+            pic->pic.value->constant.i32 = 1;
+
+            pic->pic.type.type = TYPE_UNSIGNED_NUMERIC;
+            pic->pic.type.count = 0;
+            pic->pic.count = 0;
+            pic->pic.is_index = true;
+
+            Variable *var = add_variable(pic->file, pic->pic.name, pic->pic.type, pic->pic.count);
+            var->is_index = true;
+            eat(prs, TOK_ID);
+            astlist_push(root_ptr, pic);
         }
     }
 
@@ -1711,6 +1788,171 @@ AST *parse_parens(Parser *prs) {
     return ast;
 }
 
+AST *parse_program_id(Parser *prs) {
+    eat(prs, TOK_ID);
+
+    if (prs->tok->type == TOK_DOT)
+        eat(prs, TOK_DOT);
+
+    if (expect_identifier(prs, NULL)) {
+        strncpy(prs->program_id, prs->tok->value, 64);
+        prs->program_id[64] = '\0';
+        eat(prs, TOK_ID);
+    }
+
+    return NOP(prs->tok->ln, prs->tok->col);
+}
+
+bool should_break_from(Parser *prs, char *header) {
+    return prs->tok->type == TOK_EOF || strcmp(peek(prs, 1)->value, header) == 0;
+}
+
+void parse_identification_division(Parser *prs) {
+    while (prs->tok->type != TOK_EOF && strcmp(peek(prs, 1)->value, "DIVISION") != 0) {
+        while (prs->tok->type == TOK_DOT)
+            eat(prs, TOK_DOT);
+
+        if (should_break_from(prs, "DIVISION"))
+            break;
+
+        if (!expect_identifier(prs, NULL)) {
+            eat_until(prs, TOK_DOT);
+
+            while (prs->tok->type == TOK_DOT)
+                eat(prs, TOK_DOT);
+
+            continue;
+        }
+
+        if (should_break_from(prs, "DIVISION"))
+            break;
+
+        if (strcmp(prs->tok->value, "PROGRAM-ID") == 0)
+            astlist_push(root_ptr, parse_program_id(prs));
+        else {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "invalid clause '%s' in IDENTIFICATION DIVISION\n", prs->tok->value);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+            eat_until(prs, TOK_DOT);
+        }
+    }
+}
+
+void parse_working_storage(Parser *prs) {
+    while (prs->tok->type != TOK_EOF && strcmp(peek(prs, 1)->value, "DIVISION") != 0) {
+        while (prs->tok->type == TOK_DOT)
+            eat(prs, TOK_DOT);
+
+        if (should_break_from(prs, "DIVISION"))
+            break;
+
+        if (prs->tok->type == TOK_INT) {
+            // Check if it's a PICTURE clause.
+            Token *next = peek(prs, 1);
+            Token *ahead = peek(prs, 2);
+        
+            if (ahead->type == TOK_DOT && next->type == TOK_ID) {
+                // Level statement with no PIC.
+                eat(prs, TOK_INT);
+                eat(prs, TOK_ID);
+            } else if (next->type == TOK_ID && strcmp(ahead->value, "PIC") == 0)
+                astlist_push(root_ptr, parse_pic(prs));
+        } else {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "invalid clause '%s' in WORKING-STORAGE SECTION\n", prs->tok->value);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+            eat_until(prs, TOK_DOT);
+        }
+    }
+}
+
+void parse_data_division(Parser *prs, bool exclude_working_storage) {
+    while (prs->tok->type != TOK_EOF && strcmp(peek(prs, 1)->value, "DIVISION") != 0) {
+        while (prs->tok->type == TOK_DOT)
+            eat(prs, TOK_DOT);
+
+        if (should_break_from(prs, "DIVISION"))
+            break;
+
+        if (!expect_identifier(prs, NULL)) {
+            eat_until(prs, TOK_DOT);
+            continue;
+        }
+
+        if (should_break_from(prs, "DIVISION"))
+            break;
+
+        if (!exclude_working_storage && strcmp(prs->tok->value, "WORKING-STORAGE") == 0) {
+            eat(prs, TOK_ID);
+
+            if (expect_identifier(prs, "SECTION")) {
+                eat(prs, TOK_ID);
+                eat(prs, TOK_DOT);
+                parse_working_storage(prs);
+            } else
+                eat_until(prs, TOK_DOT);
+        } else {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "invalid clause '%s' in DATA DIVISION\n", prs->tok->value);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+            eat_until(prs, TOK_DOT);
+        }
+    }
+}
+
+void parse_procedure_division(Parser *prs) {
+    while (prs->tok->type != TOK_EOF && strcmp(peek(prs, 1)->value, "DIVISION") != 0) {
+        while (prs->tok->type == TOK_DOT)
+            eat(prs, TOK_DOT);
+
+        if (should_break_from(prs, "DIVISION"))
+            break;
+
+        if (!expect_identifier(prs, NULL))
+            eat_until(prs, TOK_DOT);
+
+        if (should_break_from(prs, "DIVISION"))
+            break;
+
+        AST *stmt = parse_procedure_stmt(prs, root_ptr);
+
+        if (validate_stmt(stmt))
+            astlist_push(root_ptr, stmt);
+    }
+}
+
+void parse_division(Parser *prs) {
+    if (!expect_identifier(prs, NULL)) {
+        eat_until(prs, TOK_DOT);
+        return;
+    }
+
+    char *division_name = mystrdup(prs->tok->value);
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+    eat(prs, TOK_ID);
+
+    if (expect_identifier(prs, "DIVISION"))
+        eat(prs, TOK_ID);
+
+    if (strcmp(division_name, "IDENTIFICATION") == 0)
+        parse_identification_division(prs);
+    else if (strcmp(division_name, "DATA") == 0)
+        parse_data_division(prs, false);
+    else if (strcmp(division_name, "PROCEDURE") == 0)
+        parse_procedure_division(prs);
+    else {
+        log_error(prs->file, ln, col);
+        fprintf(stderr, "invalid division '%s'\n", division_name);
+        show_error(prs->file, ln, col);
+    }
+
+    free(division_name);
+
+    while (prs->tok->type == TOK_DOT)
+        eat(prs, TOK_DOT);
+}
+
 AST *parse_stmt(Parser *prs) {
     while (prs->tok->type == TOK_DOT)
         eat(prs, TOK_DOT);
@@ -1719,22 +1961,7 @@ AST *parse_stmt(Parser *prs) {
         case TOK_EOF: return NOP(prs->tok->ln, prs->tok->col);
         case TOK_ID: return parse_id(prs);
         case TOK_INT:
-            // Check if it's a PICTURE clause.
-            if (prs->cur_division == DIV_DATA && peek(prs, 1)->type == TOK_ID) {
-                if (peek(prs, 2)->type == TOK_DOT) {
-                    // Level statement with no PIC.
-                    eat(prs, TOK_INT);
-                    eat(prs, TOK_ID);
-                    return NOP(prs->tok->ln, prs->tok->col);
-                }
-                // Normal PIC.
-                else if (strcmp(peek(prs, 2)->value, "PIC") == 0)
-                    return parse_pic(prs);
-            }
-
-            goto fallthrough;
         case TOK_FLOAT:
-fallthrough:
         case TOK_STRING: return parse_constant(prs);
         case TOK_LPAREN: return parse_parens(prs);
         default: break;
@@ -1748,6 +1975,29 @@ fallthrough:
     return NOP(prs->tok->ln, prs->tok->col);
 }
 
+void eat_until_division(Parser *prs, char *name) {
+    while (prs->tok->type != TOK_EOF && (strcmp(prs->tok->value, name) != 0 || strcmp(peek(prs, 1)->value, "DIVISION") != 0)) {
+        if (prs->tok->type == TOK_ID)
+            eat(prs, TOK_ID);
+        else
+            eat_until(prs, TOK_ID);
+    }
+}
+
+void eat_until_section(Parser *prs, char *name) {
+    while (prs->tok->type != TOK_EOF && (strcmp(prs->tok->value, name) != 0 || strcmp(peek(prs, 1)->value, "SECTION") != 0)) {
+        if (prs->tok->type == TOK_ID)
+            eat(prs, TOK_ID);
+        else
+            eat_until(prs, TOK_ID);
+    }
+}
+
+void parser_reset(Parser *prs) {
+    prs->pos = 0;
+    prs->tok = &prs->tokens[0];
+}
+
 AST *parse_file(char *file) {
     cur_file = mystrdup(file);
     Parser prs = create_parser(file);
@@ -1756,17 +2006,44 @@ AST *parse_file(char *file) {
     root->root = create_astlist();
     root_ptr = &root->root;
 
-    while (prs.tok->type != TOK_EOF) {
-        AST *stmt = parse_stmt(&prs);
+    // Parse the IDENTIFICATION DIVISION first.
+    eat_until_division(&prs, "IDENTIFICATION");
 
-        if (validate_stmt(stmt))
-            astlist_push(&root->root, stmt);
+    if (prs.tok->type != TOK_EOF)
+        parse_division(&prs);
+
+    parser_reset(&prs);
+
+    // We need to parse the DATA DIVISION and WORKING-STORAGE SECTION 
+    // because those variables can be used in other divisions and sections.
+    eat_until_section(&prs, "WORKING-STORAGE");
+
+    if (prs.tok->type != TOK_EOF) {
+        eat(&prs, TOK_ID);
+        eat(&prs, TOK_ID);
+        parse_working_storage(&prs);
     }
 
-    if (prs.cur_program == NULL) {
+    parser_reset(&prs);
+    eat_until_division(&prs, "DATA");
+
+    if (prs.tok->type != TOK_EOF)
+        parse_data_division(&prs, true);
+
+    parser_reset(&prs);
+    eat_until_division(&prs, "ENVIRONMENT");
+
+    if (prs.tok->type != TOK_EOF)
+        parse_division(&prs);
+
+    parser_reset(&prs);
+    eat_until_division(&prs, "PROCEDURE");
+
+    if (prs.tok->type == TOK_EOF) {
         log_error(file, 0, 0);
-        fprintf(stderr, "missing PROGRAM-ID\n");
-    }
+        fprintf(stderr, "missing PROCEDURE DIVISION\n");
+    } else
+        parse_division(&prs);
 
     delete_parser(&prs);
     free(cur_file);

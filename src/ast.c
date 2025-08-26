@@ -127,6 +127,15 @@ void delete_ast(AST *ast) {
 
             free(ast->string_builder.stmts);
             delete_ast(ast->string_builder.into);
+
+            if (ast->string_builder.with_pointer != NULL)
+                delete_ast(ast->string_builder.with_pointer);
+            break;
+        case AST_OPEN:
+            delete_ast(ast->open.filename);
+            break;
+        case AST_CLOSE:
+            delete_ast(ast->close_filename);
             break;
         default: break;
     }
@@ -168,6 +177,8 @@ char *asttype_to_string(ASTType type) {
         case AST_NULL: return "null";
         case AST_BOOL: return "bool";
         case AST_STRING_BUILDER: return "string";
+        case AST_OPEN: return "open";
+        case AST_CLOSE: return "close";
         default: break;
     }
 

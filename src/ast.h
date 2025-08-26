@@ -62,7 +62,9 @@ typedef enum {
     AST_CALL,
     AST_NULL,
     AST_BOOL,
-    AST_STRING_BUILDER
+    AST_STRING_BUILDER,
+    AST_OPEN,
+    AST_CLOSE
 } ASTType;
 
 typedef struct AST AST;
@@ -202,7 +204,21 @@ typedef struct AST {
             size_t stmt_count;
             size_t stmt_cap;
             AST *into;
+            AST *with_pointer;
         } string_builder;
+
+        struct {
+            AST *filename;
+            
+            enum {
+                OPEN_INPUT,
+                OPEN_OUTPUT,
+                OPEN_IO,
+                OPEN_EXTEND
+            } type;
+        } open;
+
+        AST *close_filename;
     };
 } AST;
 

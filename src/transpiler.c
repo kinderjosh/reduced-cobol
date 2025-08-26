@@ -176,8 +176,8 @@ char *emit_root(AST *root, bool require_main, char *source_includes) {
     size_t cap = 1024;
 
     globals = malloc(1024);
-    strcpy(globals, "char string_builder[4097];\nsize_t string_builder_pointer;\n");
-    globals_len = 59;
+    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\n");
+    globals_len = 73;
     globals_cap = 1024;
 
     functions = malloc(1024);
@@ -263,13 +263,19 @@ char *emit_display(AST *ast) {
             free(spec);
             break;
         }
-        case AST_SUBSCRIPT:
+        case AST_SUBSCRIPT: {
             assert(value->subscript.base->type == AST_VAR);
-            char *spec = picturetype_to_format_specifier(&value->var.sym->type);
-            code = malloc(strlen(spec) + strlen(arg) + 19);
+
+            // Remove the table type count from the picture type.
+            PictureType type = value->var.sym->type;
+            type.count = 0;
+
+            char *spec = picturetype_to_format_specifier(&type);
+            code = malloc(strlen(spec) + strlen(arg) + 20);
             sprintf(code, "printf(\"%s\", %s);\n", spec, arg);
             free(spec);
             break;
+        }
         default:
             assert(false);
             code = calloc(1, sizeof(char));
@@ -295,18 +301,28 @@ char *emit_pic(AST *ast) {
         ast->pic.type.count++;
 
     if (ast->pic.value == NULL) {
-        code = malloc(strlen(name) + strlen(type) + 12);
+        code = malloc(strlen(name) + strlen(type) + 32);
 
-        if (ast->pic.type.count > 0)
-            sprintf(code, "%s %s[%u];\n", type, name, ast->pic.type.count);
+        if (ast->pic.type.count > 0) {
+            if (ast->pic.count > 0)
+                sprintf(code, "%s %s[%u][%u];\n", type, name, ast->pic.type.count, ast->pic.count);
+            else
+                sprintf(code, "%s %s[%u];\n", type, name, ast->pic.type.count);
+        } else if (ast->pic.count > 0)
+            sprintf(code, "%s %s[%u];\n", type, name, ast->pic.count);
         else
             sprintf(code, "%s %s;\n", type, name);
     } else {
         char *value = value_to_string(ast->pic.value);
-        code = malloc(strlen(name) + strlen(value) + strlen(type) + 17);
+        code = malloc(strlen(name) + strlen(value) + strlen(type) + 32);
 
-        if (ast->pic.type.count > 0)
-            sprintf(code, "%s %s[%u] = %s;\n", type, name, ast->pic.type.count, value);
+        if (ast->pic.type.count > 0) {
+            if (ast->pic.count > 0)
+                sprintf(code, "%s %s[%u][%u];\n", type, name, ast->pic.type.count, ast->pic.count);
+            else
+                sprintf(code, "%s %s[%u] = %s;\n", type, name, ast->pic.type.count, value);
+        } else if (ast->pic.count > 0)
+            sprintf(code, "%s %s[%u] = %s;\n", type, name, ast->pic.count, value);
         else
             sprintf(code, "%s %s = %s;\n", type, name, value);
 
@@ -721,19 +737,67 @@ char *emit_string_builder(AST *ast) {
     }
 
     char *into = value_to_string(ast->string_builder.into);
-    char *code = malloc(strlen(stmts) + strlen(into) + 85);
-    sprintf(code, "string_builder[0] = '\\0';\n"
-                  "string_builder_pointer = 0;\n"
-                  "%s"
-                  "strcpy(%s, string_builder);\n", stmts, into);
+    char *code;
+
+    if (ast->string_builder.with_pointer == NULL) {
+        code = malloc(strlen(stmts) + strlen(into) + 85);
+        sprintf(code, "string_builder[0] = '\\0';\n"
+                    "string_builder_pointer = 0;\n"
+                    "%s"
+                    "strcpy(%s, string_builder);\n", stmts, into);
+    } else {
+        char *pointer = value_to_string(ast->string_builder.with_pointer);
+        code = malloc(strlen(stmts) + strlen(into) + strlen(pointer) + 114);
+        sprintf(code, "string_builder[0] = '\\0';\n"
+                    "string_builder_pointer = 0;\n"
+                    "%s"
+                    "strcpy(%s, string_builder);\n"
+                    "%s = string_builder_pointer;\n", stmts, into, pointer);
+        free(pointer);
+    }
 
     free(stmts);
     free(into);
     return code;
 }
 
+char *emit_open(AST *ast) {
+    char *var = value_to_string(ast->open.filename);
+    char *name = picturename_to_c(ast->open.filename->var.name);
+    char *mode;
+
+    if (ast->open.type == OPEN_INPUT)
+        mode = "r";
+    else if (ast->open.type == OPEN_OUTPUT)
+        mode = "w";
+    else if (ast->open.type == OPEN_IO)
+        mode = "w+";
+    else
+        mode = "a";
+
+    char *decl = malloc(strlen(name) + 22);
+    sprintf(decl, "static FILE *file%s;\n", name);
+    append_global(decl);
+    free(decl);
+
+    char *code = malloc(strlen(var) + strlen(mode) + strlen(name) + 27);
+    sprintf(code, "file%s = fopen(%s, \"%s\");\n", name, var, mode);
+    free(var);
+    free(name);
+    return code;
+}
+
+char *emit_close(AST *ast) {
+    char *name = picturename_to_c(ast->close_filename->var.name);
+    char *code = malloc(strlen(name) + 17);
+    sprintf(code, "fclose(file%s);\n", name);
+    free(name);
+    return code;
+}
+
 char *emit_stmt(AST *ast) {
     switch (ast->type) {
+        case AST_NOP: return calloc(1, sizeof(char));
         case AST_STOP: return emit_stop(ast);
         case AST_DISPLAY: return emit_display(ast);
         case AST_PIC: return emit_pic(ast);
@@ -755,9 +819,12 @@ char *emit_stmt(AST *ast) {
         case AST_SUBSCRIPT: return emit_subscript(ast);
         case AST_CALL: return emit_call(ast);
         case AST_STRING_BUILDER: return emit_string_builder(ast);
+        case AST_OPEN: return emit_open(ast);
+        case AST_CLOSE: return emit_close(ast);
         default: break;
     }
 
+    printf(">>>>%s\n", asttype_to_string(ast->type));
     assert(false);
     return calloc(1, sizeof(char));
 }

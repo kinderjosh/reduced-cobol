@@ -13,6 +13,7 @@
            PERFORM DISPLAY-ALPHABET.
            STOP RUN.
 
+      * Move all 26 alphabet characters into the table.
        FILL-ALPHABET.
            SET WS-INDEX TO 1.
            MOVE 'A' TO WS-CHAR.
@@ -23,6 +24,7 @@
                ADD 1 TO WS-CHAR
            END-PERFORM.
 
+      * Print all 26 characters in the table.
        DISPLAY-ALPHABET.
            SET WS-INDEX TO 1.
 
