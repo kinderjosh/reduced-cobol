@@ -15,6 +15,7 @@ void usage(const char *prog) {
            "    source              produce a c file\n"
            "    run                 build and run the executable\n"
            "options:\n"
+           "    -g                  build with debugging information\n"
            "    -include <header>   include a c header\n"
            "    -l <library>        link with a c library\n"
            "    -no-main            don't add a main function\n"
@@ -42,22 +43,27 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    char *infile = NULL;
 #ifdef _WIN32
     char *outfile = "a.exe";
 #else
     char *outfile = "a.out";
 #endif
+
+    char *infile = NULL;
     char *libs = calloc(1, sizeof(char));
     size_t libs_len = 0;
     char *source_includes = calloc(1, sizeof(char));
     size_t source_includes_len = 0;
 
     for (int i = 2; i < argc; i++) {
-        if (strcmp(argv[i], "-l") == 0) {
+        if (strcmp(argv[i], "-g") == 0)
+            flags |= COMP_DEBUG;
+        else if (strcmp(argv[i], "-l") == 0) {
             if (i == argc - 1) {
                 log_error(NULL, 0, 0);
                 fprintf(stderr, "missing library name\n");
+                free(libs);
+                free(source_includes);
                 return EXIT_FAILURE;
             }
 
@@ -76,6 +82,8 @@ int main(int argc, char **argv) {
             if (i == argc - 1) {
                 log_error(NULL, 0, 0);
                 fprintf(stderr, "missing include header\n");
+                free(libs);
+                free(source_includes);
                 return EXIT_FAILURE;
             }
 
@@ -92,6 +100,8 @@ int main(int argc, char **argv) {
             if (i == argc - 1) {
                 log_error(NULL, 0, 0);
                 fprintf(stderr, "missing output filename\n");
+                free(libs);
+                free(source_includes);
                 return EXIT_FAILURE;
             }
 
@@ -102,6 +112,8 @@ int main(int argc, char **argv) {
         else {
             log_error(NULL, 0, 0);
             fprintf(stderr, "unknown option '%s'\n", argv[i]);
+            free(libs);
+            free(source_includes);
             return EXIT_FAILURE;
         }
     }
@@ -109,6 +121,8 @@ int main(int argc, char **argv) {
     if (infile == NULL) {
         log_error(NULL, 0, 0);
         fprintf(stderr, "missing input file\n");
+        free(libs);
+        free(source_includes);
         return EXIT_FAILURE;
     }
     

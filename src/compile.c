@@ -9,6 +9,9 @@
 #include <string.h>
 #include <stdbool.h>
 
+#define RELEASE_CFLAGS "-std=c99 -O1"
+#define DEBUG_CFLAGS "-std=c99 -g"
+
 extern char *cc_path;
 
 int compile(char *infile, char *outfile, unsigned int flags, char *libs, char *source_includes) {
@@ -44,15 +47,16 @@ int compile(char *infile, char *outfile, unsigned int flags, char *libs, char *s
     }
 
     char *cmd;
+    char *cflags = (flags & COMP_DEBUG) ? DEBUG_CFLAGS : RELEASE_CFLAGS;
 
     if (flags & COMP_OBJECT) {
         char *objfile = (flags & COMP_OUTFILE_SPECIFIED) ? mystrdup(outfile) : replace_file_extension(infile, "o", true);
-        cmd = malloc(strlen(cc_path) + strlen(objfile) + strlen(outc) + strlen(libs) + 24);
-        sprintf(cmd, "%s -c -o %s %s %s", cc_path, objfile, outc, libs);
+        cmd = malloc(strlen(cc_path) + strlen(cflags) + strlen(objfile) + strlen(outc) + strlen(libs) + 24);
+        sprintf(cmd, "%s %s -c -o %s %s %s", cc_path, cflags, objfile, outc, libs);
         free(objfile);
     } else {
-        cmd = malloc(strlen(cc_path) + strlen(outfile) + strlen(outc) + strlen(libs) + 21);
-        sprintf(cmd, "%s -o %s %s %s", cc_path, outfile, outc, libs);
+        cmd = malloc(strlen(cc_path) + strlen(cflags) + strlen(outfile) + strlen(outc) + strlen(libs) + 18);
+        sprintf(cmd, "%s %s -o %s %s %s", cc_path, cflags, outfile, outc, libs);
     }
 
     int status = system(cmd);
@@ -82,5 +86,6 @@ int compile(char *infile, char *outfile, unsigned int flags, char *libs, char *s
     sprintf(cmd, "./%s", outfile);
     status = system(cmd);
     free(cmd);
+    //printf("%scobc: %srun: %s%s exited with code %d\n", ESC_BOLD, ESC_MAGENTA, ESC_NORMAL, outfile, status);
     return status;
 }

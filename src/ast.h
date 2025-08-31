@@ -29,6 +29,7 @@ typedef struct {
     bool used;
     bool is_label;
     bool is_index;
+    bool is_fd;
 } Variable;
 
 typedef enum {
@@ -64,7 +65,9 @@ typedef enum {
     AST_BOOL,
     AST_STRING_BUILDER,
     AST_OPEN,
-    AST_CLOSE
+    AST_CLOSE,
+    AST_SELECT,
+    AST_READ
 } ASTType;
 
 typedef struct AST AST;
@@ -116,6 +119,7 @@ typedef struct AST {
             AST *value;
             unsigned int count;
             bool is_index;
+            bool is_fd;
         } pic;
 
         struct {
@@ -219,6 +223,23 @@ typedef struct AST {
         } open;
 
         AST *close_filename;
+
+        struct {
+            AST *fd_var;
+            char *filename;
+            AST *filestatus_var;
+
+            enum {
+                ORG_LINE_SEQUENTIAL
+            } organization;
+        } select;
+
+        struct {
+            AST *fd;
+            AST *into;
+            ASTList at_end_stmts;
+            ASTList not_at_end_stmts;
+        } read;
     };
 } AST;
 

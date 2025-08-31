@@ -99,6 +99,30 @@ char *value_to_string(AST *ast) {
     return calloc(1, sizeof(char));
 }
 
+PictureType get_value_type(AST *ast) {
+    switch (ast->type) {
+        case AST_INT: return (PictureType){ .type = TYPE_SIGNED_NUMERIC, .count = 0 };
+        case AST_FLOAT: return (PictureType){ .type = TYPE_DECIMAL_NUMERIC, .count = 0 };
+        case AST_STRING: return (PictureType){ .type = TYPE_ALPHANUMERIC, .count = strlen(ast->constant.string) };
+        case AST_VAR: return ast->var.sym->type;
+        case AST_PARENS: return get_value_type(ast->parens);
+        case AST_NOT:
+        case AST_MATH: return (PictureType){ .type = TYPE_DECIMAL_NUMERIC, .count = 0 };
+        case AST_BOOL:
+        case AST_NULL:
+        case AST_CONDITION: return (PictureType){ .type = TYPE_UNSIGNED_NUMERIC, .count = 0 };
+        case AST_SUBSCRIPT: {
+            PictureType type = get_value_type(ast->subscript.base);
+            type.count = 0;
+            return type;
+        }
+        default: break;
+    }
+
+    assert(false);
+    return (PictureType){ .type = TYPE_SIGNED_NUMERIC, .count = 0 };
+}
+
 void append_global(char *global) {
     const size_t len = strlen(global);
 
@@ -176,8 +200,8 @@ char *emit_root(AST *root, bool require_main, char *source_includes) {
     size_t cap = 1024;
 
     globals = malloc(1024);
-    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\n");
-    globals_len = 73;
+    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\nstatic char *read_buffer;\nstatic char file_status[3];\n");
+    globals_len = 127;
     globals_cap = 1024;
 
     functions = malloc(1024);
@@ -316,7 +340,9 @@ char *emit_pic(AST *ast) {
         char *value = value_to_string(ast->pic.value);
         code = malloc(strlen(name) + strlen(value) + strlen(type) + 32);
 
-        if (ast->pic.type.count > 0) {
+        if (ast->pic.is_fd)
+            sprintf(code, "FILE *%s = NULL;\n", name);
+        else if (ast->pic.type.count > 0) {
             if (ast->pic.count > 0)
                 sprintf(code, "%s %s[%u][%u];\n", type, name, ast->pic.type.count, ast->pic.count);
             else
@@ -454,6 +480,22 @@ char *emit_compute(AST *ast) {
     return values;
 }
 
+char *oper_to_string(TokenType oper) {
+    switch (oper) {
+        case TOK_EQ:
+        case TOK_EQUAL: return "==";
+        case TOK_NEQ: return "!=";
+        case TOK_LT: return "<";
+        case TOK_LTE: return "<=";
+        case TOK_GT: return ">";
+        case TOK_GTE: return ">=";
+        case TOK_AND: return "&&";
+        default: break;
+    }
+
+    return "||";
+}
+
 char *emit_condition(AST *ast) {
     char *values = malloc(32);
     strcpy(values, "(");
@@ -466,25 +508,28 @@ char *emit_condition(AST *ast) {
         
         if (value->type == AST_OPER) {
             value_string = malloc(3);
+            strcpy(value_string, oper_to_string(value->oper));
+        } else {
+            PictureType type = get_value_type(value);
 
-            if (value->oper == TOK_EQ || value->oper == TOK_EQUAL)
-                strcpy(value_string, "==");
-            else if (value->oper == TOK_NEQ)
-                strcpy(value_string, "!=");
-            else if (value->oper == TOK_LT)
-                strcpy(value_string, "<");
-            else if (value->oper == TOK_LTE)
-                strcpy(value_string, "<=");
-            else if (value->oper == TOK_GT)
-                strcpy(value_string, ">");
-            else if (value->oper == TOK_GTE)
-                strcpy(value_string, ">=");
-            else if (value->oper == TOK_AND)
-                strcpy(value_string, "&&");
-            else
-                strcpy(value_string, "||");
-        } else
-            value_string = value_to_string(value);
+            // Check for when we need to do strcmp().
+            if (i + 2 < ast->condition.size && 
+                    (type.type == TYPE_ALPHABETIC || type.type == TYPE_ALPHANUMERIC) && type.count > 0) {
+
+                char *lhs = value_to_string(value);
+                char *oper = oper_to_string(ast->condition.items[i + 1]->oper);
+                char *rhs = value_to_string(ast->condition.items[i + 2]);
+
+                value_string = malloc(strlen(lhs) + strlen(rhs) + strlen(oper) + 20);
+                sprintf(value_string, "strcmp(%s, %s) %s 0", lhs, rhs, oper);
+
+                free(lhs);
+                free(rhs);
+
+                i += 2; // Skip the rest of the condition values as we did them here.
+            } else
+                value_string = value_to_string(value);
+        }
 
         const size_t value_len = strlen(value_string);
 
@@ -496,9 +541,8 @@ char *emit_condition(AST *ast) {
         }
 
         strcat(values, value_string);
-
-        values_len += value_len;
         free(value_string);
+        values_len += value_len;
 
         if (i != ast->math.size - 1)
             strcat(values, " ");
@@ -775,13 +819,11 @@ char *emit_open(AST *ast) {
     else
         mode = "a";
 
-    char *decl = malloc(strlen(name) + 22);
-    sprintf(decl, "static FILE *file%s;\n", name);
-    append_global(decl);
-    free(decl);
-
-    char *code = malloc(strlen(var) + strlen(mode) + strlen(name) + 27);
-    sprintf(code, "file%s = fopen(%s, \"%s\");\n", name, var, mode);
+    // TODO: Implement all file status errors, 37 is just for
+    // FILE NOT OPEN, which is usually for wrong modes, but there are others.
+    char *code = malloc(strlen(var) + strlen(mode) + (strlen(name) * 3) + 75);
+    sprintf(code, "%s = fopen(%sFILENAME, \"%s\");\n"
+                  "strcpy(%sSTATUS, %s != NULL ? \"00\" : \"37\");\n", name, var, mode, name, name);
     free(var);
     free(name);
     return code;
@@ -790,8 +832,59 @@ char *emit_open(AST *ast) {
 char *emit_close(AST *ast) {
     char *name = picturename_to_c(ast->close_filename->var.name);
     char *code = malloc(strlen(name) + 17);
-    sprintf(code, "fclose(file%s);\n", name);
+    sprintf(code, "fclose(%s);\n", name);
     free(name);
+    return code;
+}
+
+char *emit_select(AST *ast) {
+    char *name = picturename_to_c(ast->select.fd_var->var.name);
+    char *filestatus = picturename_to_c(ast->select.filestatus_var->var.name);
+
+    char *code = malloc((strlen(name) * 2) + strlen(ast->select.filename) + strlen(filestatus) + 45);
+    sprintf(code, "#define %sFILENAME \"%s\"\n"
+                  "#define %sSTATUS %s\n", name, ast->select.filename, name, filestatus);
+
+    free(name);
+    free(filestatus);
+    append_global(code);
+
+    free(code);
+    return calloc(1, sizeof(char));
+}
+
+char *emit_read(AST *ast) {
+    char *fd = picturename_to_c(ast->read.fd->var.name);
+    char *into = picturename_to_c(ast->read.into->var.name);
+    char *at_end = emit_list(&ast->read.at_end_stmts);
+    char *not_at_end = emit_list(&ast->read.not_at_end_stmts);
+    char *code = malloc(strlen(fd) + (strlen(into) * 4) + strlen(at_end) + strlen(not_at_end) + 109);
+
+    // Note: we also do strcspn() which removes any trailing newlines if present.
+
+    if (ast->read.at_end_stmts.size == 0) {
+        if (ast->read.not_at_end_stmts.size == 0)
+            sprintf(code, "read_buffer = fgets(%s, sizeof(%s) - 1, %s);\n"
+                           "%s[strcspn(%s, \"\\n\\r\")] = '\\0';\n", into, into, fd, into, into);
+        else
+            sprintf(code, "read_buffer = fgets(%s, sizeof(%s) - 1, %s);\n"
+                           "%s[strcspn(%s, \"\\n\\r\")] = '\\0';\n"
+                          "if (read_buffer != NULL) {\n%s}\n", into, into, fd, into, into, not_at_end);
+    } else {
+        if (ast->read.not_at_end_stmts.size != 0)
+            sprintf(code, "read_buffer = fgets(%s, sizeof(%s) - 1, %s);\n"
+                           "%s[strcspn(%s, \"\\n\\r\")] = '\\0';\n"
+                          "if (read_buffer == NULL) {\n%s} else {\n%s}\n", into, into, fd, into, into, at_end, not_at_end);
+        else
+            sprintf(code, "read_buffer = fgets(%s, sizeof(%s) - 1, %s);\n"
+                           "%s[strcspn(%s, \"\\n\\r\")] = '\\0';\n"
+                          "if (read_buffer == NULL) {\n%s}\n", into, into, fd, into, into, at_end);
+    }
+
+    free(fd);
+    free(into);
+    free(at_end);
+    free(not_at_end);
     return code;
 }
 
@@ -821,6 +914,8 @@ char *emit_stmt(AST *ast) {
         case AST_STRING_BUILDER: return emit_string_builder(ast);
         case AST_OPEN: return emit_open(ast);
         case AST_CLOSE: return emit_close(ast);
+        case AST_SELECT: return emit_select(ast);
+        case AST_READ: return emit_read(ast);
         default: break;
     }
 

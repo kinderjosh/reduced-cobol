@@ -137,6 +137,17 @@ void delete_ast(AST *ast) {
         case AST_CLOSE:
             delete_ast(ast->close_filename);
             break;
+        case AST_SELECT:
+            delete_ast(ast->select.fd_var);
+            free(ast->select.filename);
+            delete_ast(ast->select.filestatus_var);
+            break;
+        case AST_READ:
+            delete_ast(ast->read.fd);
+            delete_ast(ast->read.into);
+            delete_astlist(&ast->read.at_end_stmts);
+            delete_astlist(&ast->read.not_at_end_stmts);
+            break;
         default: break;
     }
 
@@ -179,7 +190,8 @@ char *asttype_to_string(ASTType type) {
         case AST_STRING_BUILDER: return "string";
         case AST_OPEN: return "open";
         case AST_CLOSE: return "close";
-        default: break;
+        case AST_SELECT: return "select";
+        case AST_READ: return "read";
     }
 
     assert(false);

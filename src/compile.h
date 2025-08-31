@@ -6,6 +6,7 @@
 #define COMP_OUTFILE_SPECIFIED (0x04)
 #define COMP_OBJECT (0x08)
 #define COMP_NO_MAIN (0x10)
+#define COMP_DEBUG (0x20)
 
 int compile(char *infile, char *outfile, unsigned int flags, char *libs, char *source_includes);
 

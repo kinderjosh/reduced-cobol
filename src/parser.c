@@ -672,7 +672,9 @@ bool validate_stmt(AST *stmt) {
         case AST_CALL:
         case AST_STRING_BUILDER:
         case AST_OPEN:
-        case AST_CLOSE: break;
+        case AST_CLOSE:
+        case AST_SELECT:
+        case AST_READ: break;
         default:
             log_error(stmt->file, stmt->ln, stmt->col);
             fprintf(stderr, "invalid clause '%s'\n", asttype_to_string(stmt->type));
@@ -972,7 +974,7 @@ AST *parse_procedure(Parser *prs) {
 
     Variable *var = add_variable(prs->file, name, (PictureType){ .type = TYPE_ANY, .count = 0 }, 0);
     var->is_label = true;
-    var->is_index = false;
+    var->is_index = var->is_fd = false;
 
     AST *ast = create_ast(AST_PROC, ln, col);
     ast->proc.name = name;
@@ -1350,9 +1352,9 @@ AST *parse_open(Parser *prs) {
 
         eat_until(prs, TOK_DOT);
         return NOP(ln, col);
-    } else if ((var->type.type != TYPE_ALPHABETIC && var->type.type != TYPE_ALPHANUMERIC) || var->type.count == 0) {
+    } else if (!var->is_fd) {
         log_error(prs->file, prs->tok->ln, prs->tok->col);
-        fprintf(stderr, "invalid picture type for string filename '%s'\n", prs->tok->value);
+        fprintf(stderr, "file '%s' is not a file descriptor\n", prs->tok->value);
         show_error(prs->file, prs->tok->ln, prs->tok->col);
 
         eat_until(prs, TOK_DOT);
@@ -1387,9 +1389,9 @@ AST *parse_close(Parser *prs) {
 
         eat_until(prs, TOK_DOT);
         return NOP(ln, col);
-    } else if ((var->type.type != TYPE_ALPHABETIC && var->type.type != TYPE_ALPHANUMERIC) || var->type.count == 0) {
+    } else if (!var->is_fd) {
         log_error(prs->file, prs->tok->ln, prs->tok->col);
-        fprintf(stderr, "invalid picture type for string filename '%s'\n", prs->tok->value);
+        fprintf(stderr, "file '%s' is not a file descriptor\n", prs->tok->value);
         show_error(prs->file, prs->tok->ln, prs->tok->col);
 
         eat_until(prs, TOK_DOT);
@@ -1404,6 +1406,110 @@ AST *parse_close(Parser *prs) {
     return ast;
 }
 
+AST *parse_read(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+    eat(prs, TOK_ID);
+
+    Variable *var = find_variable(prs->file, prs->tok->value);
+
+    if (!var->used) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "undefined variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    } else if (!var->is_fd) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "file '%s' is not a file descriptor\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, "INTO")) {
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    eat(prs, TOK_ID);
+
+    Variable *into = find_variable(prs->file, prs->tok->value);
+
+    if (!into->used) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "undefined variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    } else if ((into->type.type != TYPE_ALPHABETIC && into->type.type != TYPE_ALPHANUMERIC) ||
+            into->type.count == 0) {
+
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "reading into non-string variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    eat(prs, TOK_ID);
+    
+    AST *ast = create_ast(AST_READ, ln, col);
+    ast->read.fd = create_ast(AST_VAR, ln, col);
+    ast->read.fd->var.name = mystrdup(var->name);
+    ast->read.fd->var.sym = var;
+    ast->read.into = create_ast(AST_VAR, ln, col);
+    ast->read.into->var.name = mystrdup(into->name);
+    ast->read.into->var.sym = into;
+    ast->read.at_end_stmts = create_astlist();
+    ast->read.not_at_end_stmts = create_astlist();
+
+    if (strcmp(prs->tok->value, "AT") != 0)
+        goto done_at;
+
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, "END")) {
+        eat_until(prs, TOK_DOT);
+        goto done_at;
+    }
+
+    eat(prs, TOK_ID);
+
+    // Make this an ASTList instead of a single AST because some statements
+    // can return multiple AST nodes.
+    astlist_push(&ast->read.at_end_stmts, parse_procedure_stmt(prs, &ast->read.at_end_stmts));
+
+done_at:
+
+    if (strcmp(prs->tok->value, "NOT") != 0)
+        return ast;
+
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, "AT")) {
+        eat_until(prs, TOK_DOT);
+        return ast;
+    }
+
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, "END")) {
+        eat_until(prs, TOK_DOT);
+        return ast;
+    }
+
+    eat(prs, TOK_ID);
+    astlist_push(&ast->read.not_at_end_stmts, parse_procedure_stmt(prs, &ast->read.not_at_end_stmts));
+    return ast;
+}
+
 AST *parse_id(Parser *prs) {
     const size_t ln = prs->tok->ln;
     const size_t col = prs->tok->col;
@@ -1412,7 +1518,7 @@ AST *parse_id(Parser *prs) {
         eat(prs, TOK_ID);
         return create_ast(AST_NULL, ln, col);
     } else if (strcmp(prs->tok->value, "TRUE") == 0 || strcmp(prs->tok->value, "FALSE") == 0) {
-        AST *ast = create_ast(AST_NULL, ln, col);
+        AST *ast = create_ast(AST_BOOL, ln, col);
         ast->bool_value = strcmp(prs->tok->value, "TRUE") == 0;
         eat(prs, TOK_ID);
         return ast;
@@ -1502,6 +1608,8 @@ AST *parse_procedure_stmt(Parser *prs, ASTList *root) {
         return parse_open(prs);
     else if (strcmp(prs->tok->value, "CLOSE") == 0)
         return parse_close(prs);
+    else if (strcmp(prs->tok->value, "READ") == 0)
+        return parse_read(prs);
 
     log_error(prs->file, prs->tok->ln, prs->tok->col);
     fprintf(stderr, "invalid clause '%s' in PROCEDURE DIVISION\n", prs->tok->value);
@@ -1629,7 +1737,7 @@ AST *parse_pic(Parser *prs) {
     delete_ast(level);
     ast->pic.name = name;
     ast->pic.type = type;
-    ast->pic.is_index = false;
+    ast->pic.is_index = ast->pic.is_fd = false;
     ast->pic.count = 0;
 
     if (prs->tok->type == TOK_LPAREN && !implicit_count) {
@@ -1759,9 +1867,11 @@ AST *parse_pic(Parser *prs) {
             pic->pic.type.count = 0;
             pic->pic.count = 0;
             pic->pic.is_index = true;
+            pic->pic.is_fd = false;
 
             Variable *var = add_variable(pic->file, pic->pic.name, pic->pic.type, pic->pic.count);
             var->is_index = true;
+            var->is_fd = var->is_label = false;
             eat(prs, TOK_ID);
             astlist_push(root_ptr, pic);
         }
@@ -1769,8 +1879,9 @@ AST *parse_pic(Parser *prs) {
 
 // Bunch of stuff that could possibly be parsed, don't want to
 // repeat code or make new functions, a goto here is useful.
-done:
-    add_variable(ast->file, ast->pic.name, ast->pic.type, ast->pic.count)->is_index = false;
+done: ;
+    Variable *newthingy = add_variable(ast->file, ast->pic.name, ast->pic.type, ast->pic.count);
+    newthingy->is_index = newthingy->is_fd = newthingy->is_label = false;
     return ast;
 }
 
@@ -1808,7 +1919,7 @@ bool should_break_from(Parser *prs, char *header) {
 }
 
 void parse_identification_division(Parser *prs) {
-    while (prs->tok->type != TOK_EOF && strcmp(peek(prs, 1)->value, "DIVISION") != 0) {
+    while (!should_break_from(prs, "DIVISION")) {
         while (prs->tok->type == TOK_DOT)
             eat(prs, TOK_DOT);
 
@@ -1838,12 +1949,12 @@ void parse_identification_division(Parser *prs) {
     }
 }
 
-void parse_working_storage(Parser *prs) {
-    while (prs->tok->type != TOK_EOF && strcmp(peek(prs, 1)->value, "DIVISION") != 0) {
+void parse_working_storage_section(Parser *prs) {
+    while (!should_break_from(prs, "DIVISION")) {
         while (prs->tok->type == TOK_DOT)
             eat(prs, TOK_DOT);
 
-        if (should_break_from(prs, "DIVISION"))
+        if (should_break_from(prs, "DIVISION") || should_break_from(prs, "SECTION"))
             break;
 
         if (prs->tok->type == TOK_INT) {
@@ -1866,8 +1977,215 @@ void parse_working_storage(Parser *prs) {
     }
 }
 
-void parse_data_division(Parser *prs, bool exclude_working_storage) {
-    while (prs->tok->type != TOK_EOF && strcmp(peek(prs, 1)->value, "DIVISION") != 0) {
+AST *parse_fd(Parser *prs) {
+    eat(prs, TOK_ID);
+
+    // The WORKING-STORAGE SECTION should be parsed before the FILE SECTION,
+    // so this should catch any redefinitions.
+    Variable *var = find_variable(prs->file, prs->tok->value);
+
+    if (var->used) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "redefinition of variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(prs->tok->ln, prs->tok->col);
+    }
+
+    AST *ast = create_ast(AST_PIC, prs->tok->ln, prs->tok->col);
+    ast->pic.name = mystrdup(prs->tok->value);
+    eat(prs, TOK_ID);
+    ast->pic.is_index = false;
+    ast->pic.level = 1;
+    ast->pic.type = (PictureType){ .type = TYPE_UNSIGNED_NUMERIC, .places = 0, .decimal_places = 0, .count = 0 };
+    ast->pic.value = create_ast(AST_NULL, prs->tok->ln, prs->tok->col);
+    ast->pic.is_index = false;
+    ast->pic.is_fd = true;
+
+    var = add_variable(prs->file, ast->pic.name, ast->pic.type, 0);
+    var->is_index = var->is_label = false;
+    var->is_fd = true;
+
+    return ast;
+}
+
+AST *parse_select(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+    eat(prs, TOK_ID);
+
+    Variable *var = find_variable(prs->file, prs->tok->value);
+
+    if (!var->used) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "undefined variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(prs->tok->ln, prs->tok->col);
+    }
+
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, "ASSIGN")) {
+        eat_until(prs, TOK_DOT);
+        return NOP(prs->tok->ln, prs->tok->col);
+    }
+
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, "TO")) {
+        eat_until(prs, TOK_DOT);
+        return NOP(prs->tok->ln, prs->tok->col);
+    }
+
+    eat(prs, TOK_ID);
+
+    if (prs->tok->type != TOK_STRING) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "expected filename string but found '%s'\n", tokentype_to_string(prs->tok->type));
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(prs->tok->ln, prs->tok->col);
+    }
+
+    char *filename = mystrdup(prs->tok->value);
+    eat(prs, TOK_STRING);
+
+    if (!expect_identifier(prs, "ORGANIZATION")) {
+        free(filename);
+        eat_until(prs, TOK_DOT);
+        return NOP(prs->tok->ln, prs->tok->col);
+    }
+
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, "IS")) {
+        free(filename);
+        eat_until(prs, TOK_DOT);
+        return NOP(prs->tok->ln, prs->tok->col);
+    }
+
+    eat(prs, TOK_ID);
+    unsigned int organization = 0;
+
+    if (strcmp(prs->tok->value, "LINE") == 0) {
+        eat(prs, TOK_ID);
+
+        if (expect_identifier(prs, "SEQUENTIAL")) {
+            eat(prs, TOK_ID);
+            organization = ORG_LINE_SEQUENTIAL;
+        } else
+            eat_until(prs, TOK_DOT);
+    }
+
+    AST *filestatus_var;
+
+    if (!expect_identifier(prs, "FILE")) {
+        filestatus_var = NOP(ln, col);
+        eat_until(prs, TOK_DOT);
+        goto build_ast;
+    }
+
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, "STATUS")) {
+        filestatus_var = NOP(ln, col);
+        eat_until(prs, TOK_DOT);
+        goto build_ast;
+    }
+
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, "IS")) {
+        filestatus_var = NOP(ln, col);
+        eat_until(prs, TOK_DOT);
+        goto build_ast;
+    }
+
+    eat(prs, TOK_ID);
+
+    Variable *fstat = find_variable(prs->file, prs->tok->value);
+
+    if (!fstat->used) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "undefined variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        filestatus_var = NOP(ln, col);
+        eat_until(prs, TOK_DOT);
+        goto build_ast;
+    } else if (fstat->type.count == 0 || fstat->type.type != TYPE_ALPHANUMERIC) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "file status variable '%s' must have type X(02)\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        filestatus_var = NOP(ln, col);
+        eat_until(prs, TOK_DOT);
+        goto build_ast;
+    }
+
+    filestatus_var = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
+    filestatus_var->var.name = mystrdup(prs->tok->value);
+    filestatus_var->var.sym = fstat;
+    eat(prs, TOK_ID);
+
+build_ast: ;
+
+    AST *ast = create_ast(AST_SELECT, ln, col);
+    ast->select.fd_var = create_ast(AST_VAR, ln, col);
+    ast->select.fd_var->var.name = mystrdup(var->name);
+    ast->select.fd_var->var.sym = var;
+    ast->select.filename = filename;
+    ast->select.filestatus_var = filestatus_var;
+    ast->select.organization = organization;
+    return ast;
+}
+
+void parse_file_control(Parser *prs) {
+    while (!should_break_from(prs, "DIVISION")) {
+        while (prs->tok->type == TOK_DOT)
+            eat(prs, TOK_DOT);
+
+        if (should_break_from(prs, "DIVISION") || should_break_from(prs, "SECTION"))
+            break;
+
+        if (strcmp(prs->tok->value, "SELECT") == 0)
+            astlist_push(root_ptr, parse_select(prs));
+        else {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "invalid clause '%s' in FILE SECTION\n", prs->tok->value);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+            eat_until(prs, TOK_DOT);
+        }
+    }
+}
+
+void parse_input_output_section(Parser *prs) {
+    while (!should_break_from(prs, "DIVISION")) {
+        while (prs->tok->type == TOK_DOT)
+            eat(prs, TOK_DOT);
+
+        if (should_break_from(prs, "DIVISION") || should_break_from(prs, "SECTION"))
+            break;
+
+        if (strcmp(prs->tok->value, "FILE-CONTROL") == 0) {
+            eat(prs, TOK_ID);
+            parse_file_control(prs);
+            return;
+        } else {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "invalid clause '%s' in FILE SECTION\n", prs->tok->value);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+            eat_until(prs, TOK_DOT);
+        }
+    }
+}
+
+void parse_environment_division(Parser *prs) {
+    while (!should_break_from(prs, "DIVISION")) {
         while (prs->tok->type == TOK_DOT)
             eat(prs, TOK_DOT);
 
@@ -1882,13 +2200,90 @@ void parse_data_division(Parser *prs, bool exclude_working_storage) {
         if (should_break_from(prs, "DIVISION"))
             break;
 
-        if (!exclude_working_storage && strcmp(prs->tok->value, "WORKING-STORAGE") == 0) {
+        if (strcmp(prs->tok->value, "INPUT-OUTPUT") == 0) {
             eat(prs, TOK_ID);
 
             if (expect_identifier(prs, "SECTION")) {
                 eat(prs, TOK_ID);
                 eat(prs, TOK_DOT);
-                parse_working_storage(prs);
+                parse_input_output_section(prs);
+            } else
+                eat_until(prs, TOK_DOT);
+        } else {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "invalid clause '%s' in ENVIRONMENT DIVISION\n", prs->tok->value);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+            eat_until(prs, TOK_DOT);
+        }
+    }
+}
+
+void parse_file_section(Parser *prs) {
+    while (!should_break_from(prs, "DIVISION")) {
+        while (prs->tok->type == TOK_DOT)
+            eat(prs, TOK_DOT);
+
+        if (should_break_from(prs, "DIVISION") || should_break_from(prs, "SECTION"))
+            break;
+
+        if (strcmp(prs->tok->value, "FD") == 0)
+            astlist_push(root_ptr, parse_fd(prs));
+        else {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "invalid clause '%s' in FILE SECTION\n", prs->tok->value);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+            eat_until(prs, TOK_DOT);
+        }
+    }
+}
+
+/*
+void parse_data_division(Parser *prs, bool ignore_working_storage) {
+    while (!should_break_from(prs, "DIVISION")) {
+        while (prs->tok->type == TOK_DOT)
+            eat(prs, TOK_DOT);
+
+        if (should_break_from(prs, "DIVISION"))
+            break;
+
+        if (!expect_identifier(prs, NULL)) {
+            eat_until(prs, TOK_DOT);
+            continue;
+        }
+
+        if (should_break_from(prs, "DIVISION"))
+            break;
+
+        if (strcmp(prs->tok->value, "WORKING-STORAGE") == 0) {
+            if (ignore_working_storage) {
+
+                !!WARNING THIS DOESNT WORK!!
+
+                while (!should_break_from(prs, "DIVISION") && !should_break_from(prs, "SECTION"))
+                    eat(prs, prs->tok->type);
+
+                if (strcmp(peek(prs, 1)->value, "DIVISION") == 0)
+                    return;
+
+                // Found another section, parse it next.
+                continue;
+            }
+
+            eat(prs, TOK_ID);
+
+            if (expect_identifier(prs, "SECTION")) {
+                eat(prs, TOK_ID);
+                eat(prs, TOK_DOT);
+                parse_working_storage_section(prs);
+            } else
+                eat_until(prs, TOK_DOT);
+        } elseif (strcmp(prs->tok->value, "FILE") == 0) {
+            eat(prs, TOK_ID);
+
+            if (expect_identifier(prs, "SECTION")) {
+                eat(prs, TOK_ID);
+                eat(prs, TOK_DOT);
+                parse_file_section(prs);
             } else
                 eat_until(prs, TOK_DOT);
         } else {
@@ -1896,12 +2291,13 @@ void parse_data_division(Parser *prs, bool exclude_working_storage) {
             fprintf(stderr, "invalid clause '%s' in DATA DIVISION\n", prs->tok->value);
             show_error(prs->file, prs->tok->ln, prs->tok->col);
             eat_until(prs, TOK_DOT);
-        }
+        //}
     }
 }
+*/
 
 void parse_procedure_division(Parser *prs) {
-    while (prs->tok->type != TOK_EOF && strcmp(peek(prs, 1)->value, "DIVISION") != 0) {
+    while (!should_break_from(prs, "DIVISION")) {
         while (prs->tok->type == TOK_DOT)
             eat(prs, TOK_DOT);
 
@@ -1937,8 +2333,10 @@ void parse_division(Parser *prs) {
 
     if (strcmp(division_name, "IDENTIFICATION") == 0)
         parse_identification_division(prs);
-    else if (strcmp(division_name, "DATA") == 0)
-        parse_data_division(prs, false);
+    else if (strcmp(division_name, "ENVIRONMENT") == 0)
+        parse_environment_division(prs);
+    //else if (strcmp(division_name, "DATA") == 0)
+      //  parse_data_division(prs, false);
     else if (strcmp(division_name, "PROCEDURE") == 0)
         parse_procedure_division(prs);
     else {
@@ -2006,39 +2404,75 @@ AST *parse_file(char *file) {
     root->root = create_astlist();
     root_ptr = &root->root;
 
-    // Parse the IDENTIFICATION DIVISION first.
+    // Parse the IDENTIFICATION DIVISION first for the PROGRAM-ID etc.
     eat_until_division(&prs, "IDENTIFICATION");
 
-    if (prs.tok->type != TOK_EOF)
-        parse_division(&prs);
+    if (prs.tok->type != TOK_EOF) {
+        eat(&prs, TOK_ID);
+        eat(&prs, TOK_ID);
+        parse_identification_division(&prs);
+    }
 
     parser_reset(&prs);
 
-    // We need to parse the DATA DIVISION and WORKING-STORAGE SECTION 
-    // because those variables can be used in other divisions and sections.
+    // Symbols from the WORKING-STORAGE SECTION can be referenced
+    // in the DATA DIVISION before the WORKING-STORAGE SECTION,
+    // e.g FILE SECTION, so we need to parse this first.
     eat_until_section(&prs, "WORKING-STORAGE");
 
     if (prs.tok->type != TOK_EOF) {
         eat(&prs, TOK_ID);
         eat(&prs, TOK_ID);
-        parse_working_storage(&prs);
+        parse_working_storage_section(&prs);
     }
 
     parser_reset(&prs);
+
+    eat_until_section(&prs, "FILE");
+
+    if (prs.tok->type != TOK_EOF) {
+        eat(&prs, TOK_ID);
+        eat(&prs, TOK_ID);
+        parse_file_section(&prs);
+    }
+
+    parser_reset(&prs);
+
+    // Now make sure we have other symbols from the DATA DIVISION so
+    // it can be used in other divisions, like INPUT-OUTPUT SECTION etc.
+
+    // !!!WARNING!!!
+
+    // At the moment, we instead just parse each section from the
+    // data division individually, instead of parsing the whole division at once,
+    // because redefining symbols are a problem.
+    /*
     eat_until_division(&prs, "DATA");
 
-    if (prs.tok->type != TOK_EOF)
+    if (prs.tok->type != TOK_EOF) {
+        eat(&prs, TOK_ID);
+        eat(&prs, TOK_ID);
         parse_data_division(&prs, true);
+    }
 
     parser_reset(&prs);
+    */
+
+    // Now we can parse FILE-CONTROL stuff if it is used.
     eat_until_division(&prs, "ENVIRONMENT");
 
-    if (prs.tok->type != TOK_EOF)
-        parse_division(&prs);
+    if (prs.tok->type != TOK_EOF) {
+        eat(&prs, TOK_ID);
+        eat(&prs, TOK_ID);
+        parse_environment_division(&prs);
+    }
 
     parser_reset(&prs);
+
+    // Finally parse the actual program.
     eat_until_division(&prs, "PROCEDURE");
 
+    // TODO: Don't enforce PROCEDURE DIVISION?
     if (prs.tok->type == TOK_EOF) {
         log_error(file, 0, 0);
         fprintf(stderr, "missing PROCEDURE DIVISION\n");
