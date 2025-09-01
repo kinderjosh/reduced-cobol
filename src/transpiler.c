@@ -200,7 +200,7 @@ char *emit_root(AST *root, bool require_main, char *source_includes) {
     size_t cap = 1024;
 
     globals = malloc(1024);
-    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\nstatic char *read_buffer;\nstatic char file_status[3];\n");
+    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\nstatic char *read_buffer;\nstatic char file_status[3];\nFILE *last_opened_outfile;\n");
     globals_len = 127;
     globals_cap = 1024;
 
@@ -273,43 +273,18 @@ char *picturetype_to_format_specifier(PictureType *type) {
 char *emit_display(AST *ast) {
     AST *value = ast->display.value;
     char *arg = value_to_string(value);
-    char *code;
+    PictureType type = get_value_type(ast->display.value);
 
-    switch (value->type) {
-        case AST_STRING:
-            code = malloc(strlen(arg) + 20);
-            sprintf(code, "fputs(%s, stdout);\n", arg);
-            break;
-        case AST_VAR: {
-            char *spec = picturetype_to_format_specifier(&value->var.sym->type);
-            code = malloc(strlen(spec) + strlen(arg) + 19);
-            sprintf(code, "printf(\"%s\", %s);\n", spec, arg);
-            free(spec);
-            break;
-        }
-        case AST_SUBSCRIPT: {
-            assert(value->subscript.base->type == AST_VAR);
+    if (ast->display.value->type == AST_SUBSCRIPT)
+        type.count = 0;
 
-            // Remove the table type count from the picture type.
-            PictureType type = value->var.sym->type;
-            type.count = 0;
+    char *spec = picturetype_to_format_specifier(&type);
+    char *code = malloc(strlen(arg) + strlen(spec) + 42);
+    sprintf(code, "printf(\"%s\", %s);\n", spec, arg);
+    free(spec);
 
-            char *spec = picturetype_to_format_specifier(&type);
-            code = malloc(strlen(spec) + strlen(arg) + 20);
-            sprintf(code, "printf(\"%s\", %s);\n", spec, arg);
-            free(spec);
-            break;
-        }
-        default:
-            assert(false);
-            code = calloc(1, sizeof(char));
-            break;
-    }
-
-    if (ast->display.add_newline) {
-        code = realloc(code, strlen(code) + 22);
+    if (ast->display.add_newline)
         strcat(code, "fputc('\\n', stdout);\n");
-    }
 
     free(arg);
     return code;
@@ -821,9 +796,18 @@ char *emit_open(AST *ast) {
 
     // TODO: Implement all file status errors, 37 is just for
     // FILE NOT OPEN, which is usually for wrong modes, but there are others.
-    char *code = malloc(strlen(var) + strlen(mode) + (strlen(name) * 3) + 75);
-    sprintf(code, "%s = fopen(%sFILENAME, \"%s\");\n"
-                  "strcpy(%sSTATUS, %s != NULL ? \"00\" : \"37\");\n", name, var, mode, name, name);
+    char *code = malloc(strlen(var) + strlen(mode) + (strlen(name) * 4) + 101);
+
+    if (ast->open.type == OPEN_INPUT)
+        sprintf(code, "%s = fopen(%sFILENAME, \"%s\");\n"
+                      "strcpy(%sSTATUS, %s != NULL ? \"00\" : \"37\");\n", name, var, mode, name, name);
+
+    // Need to assign the last opened output file for WRITEs with OUTPUT, IO or EXTEND.
+    else
+        sprintf(code, "%s = fopen(%sFILENAME, \"%s\");\n"
+                      "strcpy(%sSTATUS, %s != NULL ? \"00\" : \"37\");\n"
+                      "last_opened_outfile = %s;\n", name, var, mode, name, name, name);
+
     free(var);
     free(name);
     return code;
@@ -888,6 +872,19 @@ char *emit_read(AST *ast) {
     return code;
 }
 
+char *emit_write(AST *ast) {
+    char *value = value_to_string(ast->write.value);
+    PictureType type = get_value_type(ast->write.value);
+    char *spec = picturetype_to_format_specifier(&type);
+
+    char *code = malloc(strlen(value) + strlen(spec) + 41);
+    sprintf(code, "fprintf(last_opened_outfile, \"%s\", %s);\n", spec, value);
+
+    free(spec);
+    free(value);
+    return code;
+}
+
 char *emit_stmt(AST *ast) {
     switch (ast->type) {
         case AST_NOP: return calloc(1, sizeof(char));
@@ -916,6 +913,7 @@ char *emit_stmt(AST *ast) {
         case AST_CLOSE: return emit_close(ast);
         case AST_SELECT: return emit_select(ast);
         case AST_READ: return emit_read(ast);
+        case AST_WRITE: return emit_write(ast);
         default: break;
     }
 

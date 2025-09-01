@@ -67,7 +67,8 @@ typedef enum {
     AST_OPEN,
     AST_CLOSE,
     AST_SELECT,
-    AST_READ
+    AST_READ,
+    AST_WRITE
 } ASTType;
 
 typedef struct AST AST;
@@ -230,6 +231,7 @@ typedef struct AST {
             AST *filestatus_var;
 
             enum {
+                ORG_NONE,
                 ORG_LINE_SEQUENTIAL
             } organization;
         } select;
@@ -240,6 +242,10 @@ typedef struct AST {
             ASTList at_end_stmts;
             ASTList not_at_end_stmts;
         } read;
+
+        struct {
+            AST *value;
+        } write;
     };
 } AST;
 

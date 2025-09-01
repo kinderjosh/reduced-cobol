@@ -674,7 +674,8 @@ bool validate_stmt(AST *stmt) {
         case AST_OPEN:
         case AST_CLOSE:
         case AST_SELECT:
-        case AST_READ: break;
+        case AST_READ:
+        case AST_WRITE: break;
         default:
             log_error(stmt->file, stmt->ln, stmt->col);
             fprintf(stderr, "invalid clause '%s'\n", asttype_to_string(stmt->type));
@@ -1510,6 +1511,13 @@ done_at:
     return ast;
 }
 
+AST *parse_write(Parser *prs) {
+    AST *ast = create_ast(AST_WRITE, prs->tok->ln, prs->tok->col);
+    eat(prs, TOK_ID);
+    ast->write.value = parse_value(prs, TYPE_ANY);
+    return ast;
+}
+
 AST *parse_id(Parser *prs) {
     const size_t ln = prs->tok->ln;
     const size_t col = prs->tok->col;
@@ -1610,6 +1618,8 @@ AST *parse_procedure_stmt(Parser *prs, ASTList *root) {
         return parse_close(prs);
     else if (strcmp(prs->tok->value, "READ") == 0)
         return parse_read(prs);
+    else if (strcmp(prs->tok->value, "WRITE") == 0)
+        return parse_write(prs);
 
     log_error(prs->file, prs->tok->ln, prs->tok->col);
     fprintf(stderr, "invalid clause '%s' in PROCEDURE DIVISION\n", prs->tok->value);
@@ -2054,38 +2064,39 @@ AST *parse_select(Parser *prs) {
     char *filename = mystrdup(prs->tok->value);
     eat(prs, TOK_STRING);
 
-    if (!expect_identifier(prs, "ORGANIZATION")) {
-        free(filename);
-        eat_until(prs, TOK_DOT);
-        return NOP(prs->tok->ln, prs->tok->col);
-    }
+    unsigned int organization = ORG_NONE;
 
-    eat(prs, TOK_ID);
-
-    if (!expect_identifier(prs, "IS")) {
-        free(filename);
-        eat_until(prs, TOK_DOT);
-        return NOP(prs->tok->ln, prs->tok->col);
-    }
-
-    eat(prs, TOK_ID);
-    unsigned int organization = 0;
-
-    if (strcmp(prs->tok->value, "LINE") == 0) {
+    if (strcmp(prs->tok->value, "ORGANIZATION") == 0) {
         eat(prs, TOK_ID);
 
-        if (expect_identifier(prs, "SEQUENTIAL")) {
-            eat(prs, TOK_ID);
-            organization = ORG_LINE_SEQUENTIAL;
-        } else
+        if (!expect_identifier(prs, "IS")) {
+            free(filename);
             eat_until(prs, TOK_DOT);
+            return NOP(prs->tok->ln, prs->tok->col);
+        }
+
+        eat(prs, TOK_ID);
+
+        if (strcmp(prs->tok->value, "LINE") == 0) {
+            eat(prs, TOK_ID);
+
+            if (expect_identifier(prs, "SEQUENTIAL")) {
+                eat(prs, TOK_ID);
+                organization = ORG_LINE_SEQUENTIAL;
+            } else
+                eat_until(prs, TOK_DOT);
+        } else {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "invalid file ORGANIZATION '%s'\n", prs->tok->value);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+            eat_until(prs, TOK_DOT);
+        }
     }
 
     AST *filestatus_var;
 
-    if (!expect_identifier(prs, "FILE")) {
+    if (strcmp(prs->tok->value, "FILE") != 0) {
         filestatus_var = NOP(ln, col);
-        eat_until(prs, TOK_DOT);
         goto build_ast;
     }
 

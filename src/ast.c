@@ -148,6 +148,9 @@ void delete_ast(AST *ast) {
             delete_astlist(&ast->read.at_end_stmts);
             delete_astlist(&ast->read.not_at_end_stmts);
             break;
+        case AST_WRITE:
+            delete_ast(ast->write.value);
+            break;
         default: break;
     }
 
@@ -192,6 +195,7 @@ char *asttype_to_string(ASTType type) {
         case AST_CLOSE: return "close";
         case AST_SELECT: return "select";
         case AST_READ: return "read";
+        case AST_WRITE: return "write";
     }
 
     assert(false);
