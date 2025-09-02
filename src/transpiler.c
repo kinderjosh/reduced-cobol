@@ -103,7 +103,11 @@ PictureType get_value_type(AST *ast) {
     switch (ast->type) {
         case AST_INT: return (PictureType){ .type = TYPE_SIGNED_NUMERIC, .count = 0 };
         case AST_FLOAT: return (PictureType){ .type = TYPE_DECIMAL_NUMERIC, .count = 0 };
-        case AST_STRING: return (PictureType){ .type = TYPE_ALPHANUMERIC, .count = strlen(ast->constant.string) };
+        case AST_STRING: {
+            PictureType type = (PictureType){ .type = TYPE_ALPHANUMERIC, .places = strlen(ast->constant.string) };
+            type.count = type.places; // Not sure if doing this in the initializer is UB.
+            return type;
+        }
         case AST_VAR: return ast->var.sym->type;
         case AST_PARENS: return get_value_type(ast->parens);
         case AST_NOT:
