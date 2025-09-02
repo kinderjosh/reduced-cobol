@@ -1,6 +1,6 @@
-# RED COBOL
+# Reduced COBOL
 
-RED COBOL is an open-source compiler for a reduced subset of COBOL that generates native C99 code for Windows and Unix-like operating systems.
+Reduced COBOL is an open-source compiler for a smaller subset of COBOL that generates native C99 code for Windows and Unix-like operating systems.
 
 ## Requirements
 
@@ -12,8 +12,8 @@ RED COBOL is an open-source compiler for a reduced subset of COBOL that generate
 Clone the repository and run the makefile:
 
 ```console
-$ git clone https://github.com/kinderjosh/red-cobol.git
-$ cd red-cobol
+$ git clone https://github.com/kinderjosh/reduced-cobol.git
+$ cd reduced-cobol
 $ make
 ```
 
@@ -39,4 +39,4 @@ $ make
 
 ## License
 
-RED COBOL is distributed under the [MIT](./LICENSE) license.
+Reduced COBOL is distributed under the [MIT](./LICENSE) license.
