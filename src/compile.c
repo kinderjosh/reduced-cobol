@@ -83,7 +83,12 @@ int compile(char *infile, char *outfile, unsigned int flags, char *libs, char *s
         return EXIT_SUCCESS;
     }
 
+#ifdef _WIN32
+    sprintf(cmd, ".\\%s", outfile);
+#else
     sprintf(cmd, "./%s", outfile);
+#endif
+
     status = system(cmd);
     free(cmd);
     //printf("%scobc: %srun: %s%s exited with code %d\n", ESC_BOLD, ESC_MAGENTA, ESC_NORMAL, outfile, status);
