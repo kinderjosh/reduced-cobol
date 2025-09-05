@@ -151,6 +151,36 @@ void delete_ast(AST *ast) {
         case AST_WRITE:
             delete_ast(ast->write.value);
             break;
+        case AST_INSPECT:
+            delete_ast(ast->inspect.input_string);
+
+            if (ast->inspect.type == INSPECT_TALLYING) {
+                for (size_t i = 0; i < ast->inspect.tallying.tally_count; i++) {
+                    StringTally *tally = &ast->inspect.tallying.tallies[i];
+
+                    delete_ast(tally->phase.value);
+
+                    if (tally->phase.modifier != NULL)
+                        delete_ast(tally->phase.modifier);
+
+                    delete_ast(tally->output_count);
+                }
+
+                free(ast->inspect.tallying.tallies);
+            } else if (ast->inspect.type == INSPECT_REPLACING) {
+                for (size_t i = 0; i < ast->inspect.replacing.replace_count; i++) {
+                    StringReplace *replace = &ast->inspect.replacing.replaces[i];
+
+                    delete_ast(replace->old);
+                    delete_ast(replace->new);
+
+                    if (replace->modifier != NULL)
+                        delete_ast(replace->modifier);
+                }
+
+                free(ast->inspect.replacing.replaces);
+            }
+            break;
         default: break;
     }
 
@@ -196,6 +226,7 @@ char *asttype_to_string(ASTType type) {
         case AST_SELECT: return "select";
         case AST_READ: return "read";
         case AST_WRITE: return "write";
+        case AST_INSPECT: return "inspect";
     }
 
     assert(false);

@@ -204,8 +204,8 @@ char *emit_root(AST *root, bool require_main, char *source_includes) {
     size_t cap = 1024;
 
     globals = malloc(1024);
-    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\nstatic char *read_buffer;\nstatic char file_status[3];\nFILE *last_opened_outfile;\n");
-    globals_len = 127;
+    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\nstatic char *read_buffer;\nstatic char file_status[3];\nstatic FILE *last_opened_outfile;\nstatic char *inspect_string;\nstatic size_t inspect_count;\nstatic size_t inspect_string_length;\nstatic bool inspect_found;\nstatic bool inspect_locked;\n");
+    globals_len = strlen(globals);
     globals_cap = 1024;
 
     functions = malloc(1024);
@@ -889,6 +889,143 @@ char *emit_write(AST *ast) {
     return code;
 }
 
+char *emit_stringtally_phase1(StringTallyPhase1 *phase) {
+    char *value = value_to_string(phase->value);
+    char *modifier = phase->modifier == NULL ? calloc(1, sizeof(char)) : value_to_string(phase->modifier);
+    char *code = malloc(strlen(value) + strlen(modifier) + 109);
+
+    if (phase->before)
+        sprintf(code, "if (inspect_char == %s)\nbreak;\nelse if (inspect_char == %s)\ninspect_count++;\n", modifier, value);
+    else
+        sprintf(code, "if (inspect_char == %s)\ninspect_found = true;\nelse if (inspect_char == %s && inspect_found)\ninspect_count++;\n", modifier, value);
+
+    free(value);
+    free(modifier);
+    return code;
+}
+
+char *emit_stringtally_for_all(StringTally *tally) {
+    char *phases = emit_stringtally_phase1(&tally->phase);
+    char *code = malloc(strlen(phases) + 126);
+
+    if (tally->phase.after)
+        sprintf(code, "inspect_found = false;\nfor (size_t i = 0; i < inspect_string_length; i++) {\nconst char inspect_char = inspect_string[i];\n%s}\n", phases);
+    else
+        sprintf(code, "for (size_t i = 0; i < inspect_string_length; i++) {\nconst char inspect_char = inspect_string[i];\n%s}\n", phases);
+
+    free(phases);
+    return code;
+}
+
+char *emit_stringtally(StringTally *tally) {
+    if (tally->type == TALLY_CHARACTERS)
+        return mystrdup("inspect_count += inspect_string_length;\n");
+
+    char *code;
+
+    if (tally->type == TALLY_ALL)
+        code = emit_stringtally_for_all(tally);
+    else {
+        assert(false);
+        return calloc(1, sizeof(char));
+    }
+
+    char *output = value_to_string(tally->output_count);
+    code = realloc(code, (strlen(code) + strlen(output) + 20));
+    strcat(code, output);
+    strcat(code, " = inspect_count;\n");
+    free(output);
+    return code;
+}
+
+char *emit_stringreplace(StringReplace *replace) {
+    char *old = value_to_string(replace->old);
+    char *new = value_to_string(replace->new);
+    char *modifier = replace->modifier == NULL ? calloc(1, sizeof(char)) : value_to_string(replace->modifier);
+    char *code = malloc(strlen(old) + strlen(new) + strlen(modifier) + 163);
+
+    if (replace->type == REPLACING_FIRST) {
+        if (replace->before)
+            sprintf(code, "if (inspect_char == %s)\ninspect_found = true;\nelse if (!inspect_found && !inspect_locked && inspect_char == %s) {\ninspect_string[i] = %s;\ninspect_locked = true;\n}\n", modifier, old, new);
+        else if (replace->after)
+            sprintf(code, "if (inspect_char == %s)\ninspect_found = true;\nelse if (inspect_found && !inspect_locked && inspect_char == %s) {\ninspect_string[i] = %s;\ninspect_locked = true;\n}\n", modifier, old, new);
+        else
+            sprintf(code, "if (inspect_char == %s && !inspect_locked) {\ninspect_string[i] = %s;\ninspect_locked = true;\n}\n", old, new);
+    } else {
+        if (replace->before)
+            sprintf(code, "if (inspect_char == %s)\ninspect_found = true;\nelse if (!inspect_found && inspect_char == %s)\ninspect_string[i] = %s;\n", modifier, old, new);
+        else if (replace->after)
+            sprintf(code, "if (inspect_char == %s)\ninspect_found = true;\nelse if (inspect_found && inspect_char == %s)\ninspect_string[i] = %s;\n", modifier, old, new);
+        else
+            sprintf(code, "if (inspect_char == %s)\ninspect_string[i] = %s;\n", old, new);
+    }
+
+    free(old);
+    free(new);
+    free(modifier);
+    return code;
+}
+
+char *emit_inspect_combine(AST *ast, char *stmt_code) {
+    char *input_string = value_to_string(ast->inspect.input_string);
+    char *code = malloc(strlen(input_string) + strlen(stmt_code) + 91);
+    sprintf(code, "inspect_string = %s;\n"
+                  "inspect_string_length = strlen(inspect_string);\n"
+                  "inspect_count = 0;\n"
+                  "%s", input_string, stmt_code);
+
+    free(stmt_code);
+    free(input_string);
+    return code;
+}
+
+char *emit_inspect_tallying(AST *ast) {
+    char *tallies = calloc(1, sizeof(char));
+    size_t tally_len = 0;
+
+    for (size_t i = 0; i < ast->inspect.tallying.tally_count; i++) {
+        char *tally = emit_stringtally(&ast->inspect.tallying.tallies[i]);
+        const size_t len = strlen(tally);
+
+        tallies = realloc(tallies, tally_len + len + 1);
+        strcat(tallies, tally);
+        free(tally);
+        tally_len += len;
+    }
+
+    return emit_inspect_combine(ast, tallies);
+}
+
+char *emit_inspect_replacing(AST *ast) {
+    char *replaces = calloc(1, sizeof(char));
+    size_t replaces_len = 0;
+
+    for (size_t i = 0; i < ast->inspect.replacing.replace_count; i++) {
+        char *replace = emit_stringreplace(&ast->inspect.replacing.replaces[i]);
+        const size_t len = strlen(replace);
+
+        replaces = realloc(replaces, replaces_len + len + 1);
+        strcat(replaces, replace);
+        free(replace);
+        replaces_len += len;
+    }
+
+    char *code = malloc(strlen(replaces) + 143);
+    sprintf(code, "inspect_found = inspect_locked = false;\nfor (size_t i = 0; i < inspect_string_length; i++) {\nconst char inspect_char = inspect_string[i];\n%s}\n", replaces);
+    free(replaces);
+    return emit_inspect_combine(ast, code);
+}
+
+char *emit_inspect(AST *ast) {
+    if (ast->inspect.type == INSPECT_TALLYING)
+        return emit_inspect_tallying(ast);
+    else if (ast->inspect.type == INSPECT_REPLACING)
+        return emit_inspect_replacing(ast);
+
+    assert(false);
+    return calloc(1, sizeof(char));
+}
+
 char *emit_stmt(AST *ast) {
     switch (ast->type) {
         case AST_NOP: return calloc(1, sizeof(char));
@@ -918,6 +1055,7 @@ char *emit_stmt(AST *ast) {
         case AST_SELECT: return emit_select(ast);
         case AST_READ: return emit_read(ast);
         case AST_WRITE: return emit_write(ast);
+        case AST_INSPECT: return emit_inspect(ast);
         default: break;
     }
 

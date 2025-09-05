@@ -31,7 +31,10 @@ int main(int argc, char **argv) {
     const char *command = argv[1];
     unsigned int flags = 0;
 
-    if (strcmp(command, "source") == 0)
+    if (strcmp(command, "--help") == 0) {
+        usage(argv[0]);
+        return EXIT_SUCCESS;
+    } else if (strcmp(command, "source") == 0)
         flags |= COMP_SOURCE_ONLY;
     else if (strcmp(command, "object") == 0)
         flags |= COMP_OBJECT;
@@ -56,7 +59,10 @@ int main(int argc, char **argv) {
     size_t source_includes_len = 0;
 
     for (int i = 2; i < argc; i++) {
-        if (strcmp(argv[i], "-g") == 0)
+        if (strcmp(command, "--help") == 0) {
+            usage(argv[0]);
+            return EXIT_SUCCESS;
+        } else if (strcmp(argv[i], "-g") == 0)
             flags |= COMP_DEBUG;
         else if (strcmp(argv[i], "-l") == 0) {
             if (i == argc - 1) {

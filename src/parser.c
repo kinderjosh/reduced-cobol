@@ -675,7 +675,8 @@ bool validate_stmt(AST *stmt) {
         case AST_CLOSE:
         case AST_SELECT:
         case AST_READ:
-        case AST_WRITE: break;
+        case AST_WRITE:
+        case AST_INSPECT: break;
         default:
             log_error(stmt->file, stmt->ln, stmt->col);
             fprintf(stderr, "invalid clause '%s'\n", asttype_to_string(stmt->type));
@@ -1518,6 +1519,246 @@ AST *parse_write(Parser *prs) {
     return ast;
 }
 
+#define NOPHASE (StringTallyPhase1){ .value = NOP(0, 0), .modifier = NULL }
+#define NOTALLY (StringTally){ .type = TALLY_ALL, .output_count = NOP(0, 0), .phase = NOPHASE }
+
+StringTallyPhase1 parse_stringtally_phase1(Parser *prs) {
+    StringTallyPhase1 phase = (StringTallyPhase1){ .before = false, .after = false, .modifier = NULL, .value = parse_value(prs, TYPE_ANY) };
+
+    if (strcmp(prs->tok->value, "BEFORE") == 0) {
+        phase.before = true;
+        eat(prs, TOK_ID);
+
+        if (expect_identifier(prs, "INITIAL")) {
+            eat(prs, TOK_ID);
+            phase.modifier = parse_value(prs, TYPE_ANY);
+        } else
+            eat_until(prs, TOK_DOT);
+    } else if (strcmp(prs->tok->value, "AFTER") == 0) {
+        phase.after = true;
+        eat(prs, TOK_ID);
+
+        if (expect_identifier(prs, "INITIAL")) {
+            eat(prs, TOK_ID);
+            phase.modifier = parse_value(prs, TYPE_ANY);
+        } else
+            eat_until(prs, TOK_DOT);
+    }
+
+    return phase;
+}
+
+StringTally parse_stringtally(Parser *prs) {
+    Variable *output = find_variable(prs->file, prs->tok->value);
+
+    if (!output->used) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "undefined variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOTALLY;
+    } else if ((output->type.type != TYPE_DECIMAL_NUMERIC && output->type.type != TYPE_SIGNED_NUMERIC && output->type.type != TYPE_UNSIGNED_NUMERIC) 
+            || output->count > 0) {
+
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "tallying non-integer variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOTALLY;
+    }
+
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, "FOR")) {
+        eat_until(prs, TOK_DOT);
+        return NOTALLY;
+    }
+
+    eat(prs, TOK_ID);
+
+    AST *var = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
+    var->var.name = mystrdup(output->name);
+    var->var.sym = output;
+
+    StringTally tally;
+
+    if (strcmp(prs->tok->value, "CHARACTERS") == 0) {
+        eat(prs, TOK_ID);
+        return (StringTally){ .type = TALLY_CHARACTERS, .output_count = var, .phase = NOPHASE };
+    } else if (strcmp(prs->tok->value, "ALL") == 0)
+        tally.type = TALLY_ALL;
+    else {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "invalid TALLYING statement '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOTALLY;
+    }
+
+    eat(prs, TOK_ID);
+
+    tally.output_count = var;
+    tally.phase = parse_stringtally_phase1(prs);
+    return tally;
+}
+
+#define NOREPLACE (StringReplace){ .new = NOP(0, 0), .old = NOP(0, 0), .modifier = NULL, .type = 0 }
+
+StringReplace parse_stringreplace(Parser *prs) {
+    StringReplace replace;
+    replace.modifier = NULL;
+    replace.before = replace.after = false;
+
+    if (strcmp(prs->tok->value, "ALL") == 0)
+        replace.type = REPLACING_ALL;
+    else if (strcmp(prs->tok->value, "FIRST") == 0)
+        replace.type = REPLACING_FIRST;
+    else {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "invalid REPLACING value '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOREPLACE;
+    }
+
+    eat(prs, TOK_ID);
+
+    replace.old = parse_value(prs, TYPE_ANY);
+
+    if (!expect_identifier(prs, "BY")) {
+        delete_ast(replace.old);
+        eat_until(prs, TOK_DOT);
+        return NOREPLACE;
+    }
+
+    eat(prs, TOK_ID);
+    replace.new = parse_value(prs, TYPE_ANY);
+
+    if (strcmp(prs->tok->value, "BEFORE") == 0) {
+        eat(prs, TOK_ID);
+
+        if (expect_identifier(prs, "INITIAL")) {
+            eat(prs, TOK_ID);
+            replace.before = true;
+            replace.modifier = parse_value(prs, TYPE_ANY);
+        } else
+            eat_until(prs, TOK_DOT);
+    } else if (strcmp(prs->tok->value, "AFTER") == 0) {
+        eat(prs, TOK_ID);
+
+        if (expect_identifier(prs, "INITIAL")) {
+            eat(prs, TOK_ID);
+            replace.after = true;
+            replace.modifier = parse_value(prs, TYPE_ANY);
+        } else
+            eat_until(prs, TOK_DOT);
+    }
+
+    return replace;
+}
+
+InspectTallying parse_tallying(Parser *prs) {
+    StringTally *tallies = malloc(4 * sizeof(StringTally));
+    size_t tally_count = 0;
+    size_t tally_capacity = 4;
+
+    while (prs->tok->type != TOK_EOF && strcmp(peek(prs, 1)->value, "FOR") == 0) {
+        if (tally_count + 1 >= tally_capacity) {
+            tally_capacity *= 2;
+            tallies = realloc(tallies, tally_capacity * sizeof(StringTally));
+        }
+
+        tallies[tally_count++] = parse_stringtally(prs);
+    }
+
+    return (InspectTallying){ .tallies = tallies, .tally_count = tally_count, .tally_capacity = tally_capacity };
+}
+
+InspectReplacing parse_replacing(Parser *prs) {
+    StringReplace *replaces = malloc(4 * sizeof(StringReplace));
+    size_t replace_count = 0;
+    size_t replace_capacity = 4;
+
+    while (prs->tok->type != TOK_EOF && (strcmp(prs->tok->value, "ALL") == 0 || strcmp(prs->tok->value, "FIRST") == 0)) { 
+        if (replace_count + 1 >= replace_capacity) {
+            replace_capacity *= 2;
+            replaces = realloc(replaces, replace_capacity * sizeof(StringReplace));
+        }
+
+        replaces[replace_count++] = parse_stringreplace(prs);
+    }
+
+    return (InspectReplacing){ .replaces = replaces, .replace_count = replace_count, .replace_capacity = replace_capacity };
+}
+
+
+AST *parse_inspect_tallying(Parser *prs, Variable *input_string, const size_t ln, const size_t col) {
+    AST *ast = create_ast(AST_INSPECT, ln, col);
+    ast->inspect.type = INSPECT_TALLYING;
+    ast->inspect.input_string = create_ast(AST_VAR, ln, col);
+    ast->inspect.input_string->var.name = mystrdup(input_string->name);
+    ast->inspect.input_string->var.sym = input_string;
+    ast->inspect.tallying = parse_tallying(prs);
+    return ast;
+}
+
+AST *parse_inspect_replacing(Parser *prs, Variable *input_string, const size_t ln, const size_t col) {
+    AST *ast = create_ast(AST_INSPECT, ln, col);
+    ast->inspect.type = INSPECT_REPLACING;
+    ast->inspect.input_string = create_ast(AST_VAR, ln, col);
+    ast->inspect.input_string->var.name = mystrdup(input_string->name);
+    ast->inspect.input_string->var.sym = input_string;
+    ast->inspect.replacing = parse_replacing(prs);
+    return ast;
+}
+
+AST *parse_inspect(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+    eat(prs, TOK_ID);
+
+    Variable *var = find_variable(prs->file, prs->tok->value);
+
+    if (!var->used) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "undefined variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    } else if ((var->type.type != TYPE_ALPHABETIC && var->type.type != TYPE_ALPHANUMERIC) ||
+            var->type.count == 0) {
+
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "inspecting non-string variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    eat(prs, TOK_ID);
+
+    if (strcmp(prs->tok->value, "TALLYING") == 0) {
+        eat(prs, TOK_ID);
+        return parse_inspect_tallying(prs, var, ln, col);
+    } else if (strcmp(prs->tok->value, "REPLACING") == 0) {
+        eat(prs, TOK_ID);
+        return parse_inspect_replacing(prs, var, ln, col);
+    }
+
+    log_error(prs->file, prs->tok->ln, prs->tok->col);
+    fprintf(stderr, "invalid INSPECT statement '%s'\n", prs->tok->value);
+    show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+    eat_until(prs, TOK_DOT);
+    return NOP(ln, col);
+}
+
 AST *parse_id(Parser *prs) {
     const size_t ln = prs->tok->ln;
     const size_t col = prs->tok->col;
@@ -1620,6 +1861,8 @@ AST *parse_procedure_stmt(Parser *prs, ASTList *root) {
         return parse_read(prs);
     else if (strcmp(prs->tok->value, "WRITE") == 0)
         return parse_write(prs);
+    else if (strcmp(prs->tok->value, "INSPECT") == 0)
+        return parse_inspect(prs);
 
     log_error(prs->file, prs->tok->ln, prs->tok->col);
     fprintf(stderr, "invalid clause '%s' in PROCEDURE DIVISION\n", prs->tok->value);
@@ -2167,7 +2410,7 @@ void parse_file_control(Parser *prs) {
             astlist_push(root_ptr, parse_select(prs));
         else {
             log_error(prs->file, prs->tok->ln, prs->tok->col);
-            fprintf(stderr, "invalid clause '%s' in FILE SECTION\n", prs->tok->value);
+            fprintf(stderr, "invalid clause '%s' in FILE CONTROL\n", prs->tok->value);
             show_error(prs->file, prs->tok->ln, prs->tok->col);
             eat_until(prs, TOK_DOT);
         }
@@ -2188,7 +2431,7 @@ void parse_input_output_section(Parser *prs) {
             return;
         } else {
             log_error(prs->file, prs->tok->ln, prs->tok->col);
-            fprintf(stderr, "invalid clause '%s' in FILE SECTION\n", prs->tok->value);
+            fprintf(stderr, "invalid clause '%s' in INPUT-OUTPUT SECTION\n", prs->tok->value);
             show_error(prs->file, prs->tok->ln, prs->tok->col);
             eat_until(prs, TOK_DOT);
         }

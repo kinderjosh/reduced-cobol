@@ -68,7 +68,8 @@ typedef enum {
     AST_CLOSE,
     AST_SELECT,
     AST_READ,
-    AST_WRITE
+    AST_WRITE,
+    AST_INSPECT
 } ASTType;
 
 typedef struct AST AST;
@@ -87,6 +88,50 @@ typedef struct {
         DELIM_SIZE
     } delimit;
 } StringStatement;
+
+typedef struct {
+    bool before;
+    bool after;
+    AST *value;
+    AST *modifier;
+} StringTallyPhase1;
+
+typedef struct {
+    enum {
+        TALLY_CHARACTERS,
+        TALLY_TOTAL_CHARACTERS,
+        TALLY_ALL,
+        TALLY_LEADING
+    } type;
+
+    AST *output_count;
+    StringTallyPhase1 phase;
+} StringTally;
+
+typedef struct {
+    StringTally *tallies;
+    size_t tally_count;
+    size_t tally_capacity;
+} InspectTallying;
+
+typedef struct {
+    enum {
+        REPLACING_ALL,
+        REPLACING_FIRST,
+    } type;
+
+    AST *old;
+    AST *new;
+    AST *modifier;
+    bool before;
+    bool after;
+} StringReplace;
+
+typedef struct {
+    StringReplace *replaces;
+    size_t replace_count;
+    size_t replace_capacity;
+} InspectReplacing;
 
 typedef struct AST {
     ASTType type;
@@ -246,6 +291,22 @@ typedef struct AST {
         struct {
             AST *value;
         } write;
+
+        struct {
+            enum {
+                INSPECT_TALLYING,
+                INSPECT_REPLACING,
+                INSPECT_TALLYING_REPLACING,
+                INSPECT_CONVERTING
+            } type;
+
+            AST *input_string;
+
+            union {
+                InspectTallying tallying;
+                InspectReplacing replacing;
+            };
+        } inspect;
     };
 } AST;
 
