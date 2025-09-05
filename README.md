@@ -2,6 +2,9 @@
 
 Reduced COBOL is an open-source compiler for a smaller subset of COBOL that generates native C99 code for Windows and Unix-like operating systems.
 
+> [!WARNING]
+> This compiler is still in development and contains many bugs and missing features. Things will break and not work correctly.
+
 ## Requirements
 
 - gcc
