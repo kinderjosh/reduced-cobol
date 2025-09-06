@@ -9,8 +9,10 @@
 #include <stdint.h>
 #include <inttypes.h>
 
-#define INCLUDE_LIBS "#define _RED_COBOL_SOURCE\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdint.h>\n#include <ctype.h>\n#include <inttypes.h>\n#include <limits.h>\n"
-#define INCLUDE_LIBS_LEN 208
+#define INCLUDE_LIBS "#define _RED_COBOL_SOURCE\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stdbool.h>\n#include <assert.h>\n#include <stdint.h>\n#include <ctype.h>\n#include <inttypes.h>\n#include <limits.h>\n#include <errno.h>\n"
+#define INCLUDE_LIBS_LEN strlen(INCLUDE_LIBS)
+
+#define IS_STRING(ttype) ((ttype.type == TYPE_ALPHABETIC || ttype.type == TYPE_ALPHANUMERIC) && ttype.count > 0)
 
 static char *globals;
 static size_t globals_len;
@@ -90,6 +92,7 @@ char *value_to_string(AST *ast) {
         case AST_NOT: return emit_stmt(ast);
         case AST_BOOL: return mystrdup(ast->bool_value ? "true" : "false");
         case AST_NULL: return mystrdup("NULL");
+        case AST_ZERO: return mystrdup("0");
         default: break;
     }
 
@@ -101,6 +104,7 @@ char *value_to_string(AST *ast) {
 
 PictureType get_value_type(AST *ast) {
     switch (ast->type) {
+        case AST_ZERO:
         case AST_INT: return (PictureType){ .type = TYPE_SIGNED_NUMERIC, .count = 0 };
         case AST_FLOAT: return (PictureType){ .type = TYPE_DECIMAL_NUMERIC, .count = 0 };
         case AST_STRING: {
@@ -204,9 +208,9 @@ char *emit_root(AST *root, bool require_main, char *source_includes) {
     size_t cap = 1024;
 
     globals = malloc(1024);
-    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\nstatic char *read_buffer;\nstatic char file_status[3];\nstatic FILE *last_opened_outfile;\nstatic char *inspect_string;\nstatic size_t inspect_count;\nstatic size_t inspect_string_length;\nstatic bool inspect_found;\nstatic bool inspect_locked;\n");
+    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\nstatic char *read_buffer;\nstatic char file_status[3];\nstatic FILE *last_opened_outfile;\nstatic char *inspect_string;\nstatic size_t inspect_count;\nstatic size_t inspect_string_length;\nstatic bool inspect_found;\nstatic bool inspect_locked;\nstatic char *endptr;\n__attribute__((noreturn)) static void cobol_error() {\nfprintf(stderr, \"COBOL: ERROR: CRITICAL RUNTIME ERROR\\n\");\nexit(EXIT_FAILURE);\n}\n");
     globals_len = strlen(globals);
-    globals_cap = 1024;
+    globals_cap = 2048;
 
     functions = malloc(1024);
     functions[0] = '\0';
@@ -343,13 +347,38 @@ char *emit_pic(AST *ast) {
 char *emit_move(AST *ast) {
     char *dst = value_to_string(ast->move.dst);
     char *src = value_to_string(ast->move.src);
+    char *code;
 
-    char *code = malloc(strlen(src) + strlen(dst) + 17);
+    PictureType dst_type = get_value_type(ast->move.dst);
+    PictureType src_type = get_value_type(ast->move.src);
 
-    if (ast->move.src->type == AST_STRING)
-        sprintf(code, "strcpy(%s, %s);\n", dst, src);
-    else
+    if (IS_STRING(dst_type) && IS_STRING(src_type)) {
+        code = malloc(strlen(src) + strlen(dst) + 64);
+        sprintf(code, "strncpy(%s, %s, %u);\n", dst, src, dst_type.count + 1);
+    } else if (IS_STRING(dst_type)) {
+        char *spec = picturetype_to_format_specifier(&src_type);
+        code = malloc(strlen(src) + strlen(dst) + strlen(spec) + 64);
+        sprintf(code, "snprintf(%s, %u, \"%s\", %s);\n", dst, dst_type.count + 1, spec, src);
+        free(spec);
+    } else if (IS_STRING(src_type)) {
+        char *conv;
+
+        if (dst_type.type == TYPE_SIGNED_NUMERIC)
+            conv = "l";
+        else if (dst_type.type == TYPE_UNSIGNED_NUMERIC)
+            conv = "ul";
+        else
+            conv = "d";
+
+        code = malloc((strlen(src) * 2) + strlen(dst) + strlen(conv) + 133);
+        sprintf(code, "errno = 0;\n"
+                      "%s = strto%s(%s, &endptr%s;\n"
+                      "if (%s == endptr || *endptr != '\\0' || errno == ERANGE || errno == EINVAL)\ncobol_error();\n", 
+                      dst, conv, src, dst_type.type == TYPE_DECIMAL_NUMERIC ? ")" : ", 10)", src);
+    } else {
+        code = malloc(strlen(src) + strlen(dst) + 10);
         sprintf(code, "%s = %s;\n", dst, src);
+    }
 
     free(dst);
     free(src);
@@ -761,21 +790,22 @@ char *emit_string_builder(AST *ast) {
 
     char *into = value_to_string(ast->string_builder.into);
     char *code;
+    PictureType into_type = get_value_type(ast->string_builder.into);
 
     if (ast->string_builder.with_pointer == NULL) {
-        code = malloc(strlen(stmts) + strlen(into) + 85);
+        code = malloc(strlen(stmts) + strlen(into) + 128);
         sprintf(code, "string_builder[0] = '\\0';\n"
                     "string_builder_pointer = 0;\n"
                     "%s"
-                    "strcpy(%s, string_builder);\n", stmts, into);
+                    "strncpy(%s, string_builder, %u);\n", stmts, into, into_type.count + 1);
     } else {
         char *pointer = value_to_string(ast->string_builder.with_pointer);
-        code = malloc(strlen(stmts) + strlen(into) + strlen(pointer) + 114);
+        code = malloc(strlen(stmts) + strlen(into) + strlen(pointer) + 164);
         sprintf(code, "string_builder[0] = '\\0';\n"
                     "string_builder_pointer = 0;\n"
                     "%s"
-                    "strcpy(%s, string_builder);\n"
-                    "%s = string_builder_pointer;\n", stmts, into, pointer);
+                    "strncpy(%s, string_builder, %u);\n"
+                    "%s = string_builder_pointer;\n", stmts, into, into_type.count + 1, pointer);
         free(pointer);
     }
 
@@ -1026,6 +1056,19 @@ char *emit_inspect(AST *ast) {
     return calloc(1, sizeof(char));
 }
 
+char *emit_accept(AST *ast) {
+    assert(ast->accept.dst->type == AST_VAR);
+    char *dst = value_to_string(ast->accept.dst);
+    char *code = malloc((strlen(dst) * 3) + 128);
+
+    // Also removes the trailing newline if found.
+    sprintf(code, "fgets(%s, %u, stdin);\n"
+                  "%s[strcspn(%s, \"\\n\")] = '\\0';\n", dst, ast->accept.dst->var.sym->type.count, dst, dst);
+
+    free(dst);
+    return code;
+}
+
 char *emit_stmt(AST *ast) {
     switch (ast->type) {
         case AST_NOP: return calloc(1, sizeof(char));
@@ -1056,6 +1099,7 @@ char *emit_stmt(AST *ast) {
         case AST_READ: return emit_read(ast);
         case AST_WRITE: return emit_write(ast);
         case AST_INSPECT: return emit_inspect(ast);
+        case AST_ACCEPT: return emit_accept(ast);
         default: break;
     }
 

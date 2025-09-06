@@ -181,6 +181,9 @@ void delete_ast(AST *ast) {
                 free(ast->inspect.replacing.replaces);
             }
             break;
+        case AST_ACCEPT:
+            delete_ast(ast->accept.dst);
+            break;
         default: break;
     }
 
@@ -227,6 +230,8 @@ char *asttype_to_string(ASTType type) {
         case AST_READ: return "read";
         case AST_WRITE: return "write";
         case AST_INSPECT: return "inspect";
+        case AST_ACCEPT: return "accept";
+        case AST_ZERO: return "zero";
     }
 
     assert(false);

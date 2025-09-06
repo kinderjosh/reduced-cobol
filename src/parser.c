@@ -164,7 +164,8 @@ AST *parse_value(Parser *prs, unsigned int type) {
         case AST_NOT:
         case AST_LABEL:
         case AST_NULL:
-        case AST_BOOL: break;
+        case AST_BOOL:
+        case AST_ZERO: break;
         case AST_SUBSCRIPT:
             if (value->subscript.value == NULL)
                 break;
@@ -676,7 +677,8 @@ bool validate_stmt(AST *stmt) {
         case AST_SELECT:
         case AST_READ:
         case AST_WRITE:
-        case AST_INSPECT: break;
+        case AST_INSPECT:
+        case AST_ACCEPT: break;
         default:
             log_error(stmt->file, stmt->ln, stmt->col);
             fprintf(stderr, "invalid clause '%s'\n", asttype_to_string(stmt->type));
@@ -1759,6 +1761,39 @@ AST *parse_inspect(Parser *prs) {
     return NOP(ln, col);
 }
 
+AST *parse_accept(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+    eat(prs, TOK_ID);
+
+    Variable *var = find_variable(prs->file, prs->tok->value);
+
+    if (!var->used) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "undefined variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    } else if ((var->type.type != TYPE_ALPHABETIC && var->type.type != TYPE_ALPHANUMERIC) ||
+            var->type.count == 0) {
+
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "accepting into non-string variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    AST *ast = create_ast(AST_ACCEPT, ln, col);
+    ast->accept.dst = create_ast(AST_VAR, ln, col);
+    ast->accept.dst->var.name = mystrdup(prs->tok->value);
+    ast->accept.dst->var.sym = var;
+    eat(prs, TOK_ID);
+    return ast;
+}
+
 AST *parse_id(Parser *prs) {
     const size_t ln = prs->tok->ln;
     const size_t col = prs->tok->col;
@@ -1771,6 +1806,9 @@ AST *parse_id(Parser *prs) {
         ast->bool_value = strcmp(prs->tok->value, "TRUE") == 0;
         eat(prs, TOK_ID);
         return ast;
+    } else if (strcmp(prs->tok->value, "ZERO") == 0) {
+        eat(prs, TOK_ID);
+        return create_ast(AST_ZERO, ln, col);
     }
 
     Variable *sym;
@@ -1863,6 +1901,8 @@ AST *parse_procedure_stmt(Parser *prs, ASTList *root) {
         return parse_write(prs);
     else if (strcmp(prs->tok->value, "INSPECT") == 0)
         return parse_inspect(prs);
+    else if (strcmp(prs->tok->value, "ACCEPT") == 0)
+        return parse_accept(prs);
 
     log_error(prs->file, prs->tok->ln, prs->tok->col);
     fprintf(stderr, "invalid clause '%s' in PROCEDURE DIVISION\n", prs->tok->value);

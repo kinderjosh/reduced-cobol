@@ -69,7 +69,9 @@ typedef enum {
     AST_SELECT,
     AST_READ,
     AST_WRITE,
-    AST_INSPECT
+    AST_INSPECT,
+    AST_ACCEPT,
+    AST_ZERO
 } ASTType;
 
 typedef struct AST AST;
@@ -307,6 +309,10 @@ typedef struct AST {
                 InspectReplacing replacing;
             };
         } inspect;
+
+        struct {
+            AST *dst;
+        } accept;
     };
 } AST;
 

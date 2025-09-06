@@ -5,7 +5,7 @@
       * Some signed integers.
        01 A PIC S9(02) VALUE 10.
        01 B PIC S9(02) VALUE 4.
-       01 C PIC S9(02).
+       01 C PIC S9(02) VALUE ZERO.
       * A floating point.
        01 RESULT PIC S9(02)V9(02).
        PROCEDURE DIVISION.
