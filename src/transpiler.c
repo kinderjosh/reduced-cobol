@@ -1076,7 +1076,7 @@ char *emit_accept_argv(AST *ast) {
 char *emit_accept(AST *ast) {
     assert(ast->accept.dst->type == AST_VAR);
 
-    if (ast->accept.from->type == AST_ARGV)
+    if (ast->accept.from != NULL && ast->accept.from->type == AST_ARGV)
         return emit_accept_argv(ast);
 
     char *dst = value_to_string(ast->accept.dst);
