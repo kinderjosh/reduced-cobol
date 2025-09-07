@@ -202,9 +202,9 @@ char *emit_list(ASTList *list) {
 
 char *emit_root(AST *root, bool require_main, char *source_includes) {
     char *code = malloc(1024);
-    strcpy(code, "int main(void) {\n");
+    strcpy(code, "int main(int argc, char **argv) {\n");
 
-    size_t len = 18;
+    size_t len = strlen(code);
     size_t cap = 1024;
 
     globals = malloc(1024);
@@ -733,84 +733,87 @@ char *emit_call(AST *ast) {
 
 char *emit_string_stmt(StringStatement *stmt) {
     char *value = value_to_string(stmt->value);
-    char *code = malloc((strlen(value) * 5) + 256);
-    bool increment_pointer = true;
-
-    switch (stmt->delimit) {
-        case DELIM_SIZE:
-            sprintf(code, "strcat(string_builder, %s);\n", value);
-            break;
-        case DELIM_SPACE:
-            sprintf(code, "strncat(string_builder, %s, strchr(%s, ' ') - %s);\n"
-                          "string_builder_pointer += strlen(%s);\n"
-                          "string_builder[string_builder_pointer] = '\\0';\n", value, value, value, value);
-
-            increment_pointer = false;
-            break;
-        default:
-            assert(false);
-            code = calloc(1, sizeof(char));
-            break;
-    }
-
-    if (!increment_pointer) {
-        free(value);
-        return code;
-    }
+    char *increment = malloc((strlen(value) * 2) + 64);
+    char *size = malloc(strlen(value) + 32);
 
     if (stmt->value->type == AST_STRING) {
-        char buffer[32];
-        sprintf(buffer, "%zu", strlen(stmt->value->constant.string));
-        strcat(code, "string_builder_pointer += ");
-        strcat(code, buffer);
-        strcat(code, ";\n");
+        if (stmt->delimit == DELIM_SIZE) {
+            sprintf(size, "%zu", strlen(stmt->value->constant.string));
+            sprintf(increment, "string_builder_pointer += %zu;\n", strlen(stmt->value->constant.string));
+        } else {
+            sprintf(size, "%zu", strcspn(stmt->value->constant.string, " "));
+            sprintf(increment, "string_builder_pointer += %zu;\n", strcspn(stmt->value->constant.string, " "));
+        }
+    } else if (stmt->delimit == DELIM_SIZE) {
+        PictureType type = get_value_type(stmt->value);
+        sprintf(size, "%u", type.count);
+        sprintf(increment, "string_builder_pointer += %u;\n", type.count);
     } else {
-        strcat(code, "string_builder_pointer += strlen(");
-        strcat(code, value);
-        strcat(code, ");\n");
+        sprintf(size, "strcspn(%s, \" \")", value);
+        sprintf(increment, "string_builder_pointer += strcspn(%s, \" \");\n", value);
     }
 
+    char *code = malloc(strlen(value) + strlen(increment) + strlen(size) + 94);
+
+    if (stmt->delimit == DELIM_SIZE)
+        sprintf(code, "strcat(string_builder, %s);\n"
+                      "%s", value, increment);
+    else
+        sprintf(code, "strncat(string_builder, %s, %s);\n"
+                      "%s", value, size, increment);
+
     free(value);
+    free(increment);
+    free(size);
     return code;
 }
 
 char *emit_string_builder(AST *ast) {
-    char *stmts = emit_string_stmt(&ast->string_builder.base);
-    size_t stmts_len = strlen(stmts);
+    char *base = emit_string_stmt(&ast->string_builder.base);
+    char *code = malloc(strlen(base) + 89);
+    sprintf(code, "string_builder[0] = string_builder_pointer = 0;\n"
+                  "%s", base);
 
-    for (size_t i = 0; i < ast->string_builder.stmt_count; i++) {
-        char *next = emit_string_stmt(&ast->string_builder.stmts[i]);
-        const size_t len = strlen(next);
+    free(base);
+    size_t code_len = strlen(code);
 
-        stmts = realloc(stmts, stmts_len + len + 1);
-        strcat(stmts, next);
-        free(next);
-        stmts_len += len;
-    }
+    for (size_t j = 0; j < ast->string_builder.into_vars.size; j++) {
+        for (size_t i = 0; i < ast->string_builder.stmt_count; i++) {
+            char *next = emit_string_stmt(&ast->string_builder.stmts[i]);
+            const size_t len = strlen(next);
 
-    char *into = value_to_string(ast->string_builder.into);
-    char *code;
-    PictureType into_type = get_value_type(ast->string_builder.into);
+            code = realloc(code, code_len + len + 1);
+            strcat(code, next);
+            free(next);
+            code_len += len;
+        }
 
-    if (ast->string_builder.with_pointer == NULL) {
-        code = malloc(strlen(stmts) + strlen(into) + 128);
-        sprintf(code, "string_builder[0] = '\\0';\n"
-                    "string_builder_pointer = 0;\n"
-                    "%s"
-                    "strncpy(%s, string_builder, %u);\n", stmts, into, into_type.count + 1);
-    } else {
-        char *pointer = value_to_string(ast->string_builder.with_pointer);
-        code = malloc(strlen(stmts) + strlen(into) + strlen(pointer) + 164);
-        sprintf(code, "string_builder[0] = '\\0';\n"
-                    "string_builder_pointer = 0;\n"
-                    "%s"
-                    "strncpy(%s, string_builder, %u);\n"
-                    "%s = string_builder_pointer;\n", stmts, into, into_type.count + 1, pointer);
+        char *into = value_to_string(ast->string_builder.into_vars.items[j]);
+        PictureType into_type = get_value_type(ast->string_builder.into_vars.items[j]);
+
+        char *pointer = ast->string_builder.with_pointer == NULL ? calloc(1, sizeof(char)) 
+            : value_to_string(ast->string_builder.with_pointer);
+
+        char *store = malloc(strlen(into) + strlen(pointer) + 128);
+
+        if (ast->string_builder.with_pointer == NULL)
+            sprintf(store, "strncpy(%s, string_builder, %u);\n"
+                           "string_builder[0] = '\\0';\n", into, into_type.count + 1);
+        else
+            sprintf(store, "strncpy(%s, string_builder, %u);\n"
+                           "%s = string_builder_pointer;\n"
+                           "string_builder[0] = '\\0';\n", into, into_type.count, pointer);
+
         free(pointer);
+        free(into);
+
+        const size_t len = strlen(store);
+        code = realloc(code, code_len + len + 1);
+        strcat(code, store);
+        free(store);
+        code_len += len;
     }
 
-    free(stmts);
-    free(into);
     return code;
 }
 
@@ -1056,8 +1059,26 @@ char *emit_inspect(AST *ast) {
     return calloc(1, sizeof(char));
 }
 
+char *emit_accept_argv(AST *ast) {
+    char *dst = value_to_string(ast->accept.dst);
+    char *code = malloc((strlen(dst) * 3) + 95);
+
+    sprintf(code, "strcpy(%s, argv[0]);\n"
+                  "for (int i = 1; i < argc; i++) {\n"
+                  "strcat(%s, \" \");\n"
+                  "strcat(%s, argv[i]);\n"
+                  "}\n", dst, dst, dst);
+
+    free(dst);
+    return code;
+}
+
 char *emit_accept(AST *ast) {
     assert(ast->accept.dst->type == AST_VAR);
+
+    if (ast->accept.from->type == AST_ARGV)
+        return emit_accept_argv(ast);
+
     char *dst = value_to_string(ast->accept.dst);
     char *code = malloc((strlen(dst) * 3) + 128);
 

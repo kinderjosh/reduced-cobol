@@ -1025,6 +1025,11 @@ AST *parse_subscript(Parser *prs, AST *base) {
             fprintf(stderr, "accessing non-table variable '%s'\n", base->var.name);
             show_error(base->file, base->ln, base->col);
             break;
+        // We don't know the count at compile time, 
+        // so we'll just assume 49 because thats the max level of PICs.
+        case AST_ARGV:
+            table_size = 49;
+            break;
         default:
             log_error(base->file, base->ln, base->col);
             fprintf(stderr, "accessing non-table value '%s'\n", asttype_to_string(base->type));
@@ -1224,6 +1229,7 @@ StringStatement parse_string_stmt(Parser *prs) {
 AST *parse_string_builder(Parser *prs) {
     const size_t ln = prs->tok->ln;
     const size_t col = prs->tok->col;
+    bool unstring = strcmp(prs->tok->value, "UNSTRING") == 0;
     eat(prs, TOK_ID);
 
     if (!expect_identifier(prs, NULL)) {
@@ -1254,11 +1260,45 @@ AST *parse_string_builder(Parser *prs) {
         ast->string_builder.stmts[ast->string_builder.stmt_count++] = stmt;
     }
 
+    ast->string_builder.into_vars = create_astlist();
+
     if (expect_identifier(prs, "INTO")) {
         eat(prs, TOK_ID);
-        ast->string_builder.into = parse_value(prs, TYPE_ANY);
-    } else
-        ast->string_builder.into = NOP(ln, col);
+
+        while (prs->tok->type != TOK_EOF && strcmp(prs->tok->value, "WITH") != 0 &&
+                strcmp(prs->tok->value, "END-STRING") != 0 && strcmp(prs->tok->value, "END-UNSTRING") != 0) {
+            if (!expect_identifier(prs, NULL)) {
+                eat_until(prs, TOK_DOT);
+                break;
+            }
+
+            Variable *into = find_variable(prs->file, prs->tok->value);
+
+            if (!into->used) {
+                log_error(prs->file, prs->tok->ln, prs->tok->col);
+                fprintf(stderr, "undefined variable '%s'\n", prs->tok->value);
+                show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+                eat_until(prs, TOK_DOT);
+                return NOP(ln, col);
+            } else if ((into->type.type != TYPE_ALPHABETIC && into->type.type != TYPE_ALPHANUMERIC) ||
+                    into->type.count == 0) {
+
+                log_error(prs->file, prs->tok->ln, prs->tok->col);
+                fprintf(stderr, "unstringing into non-string variable '%s'\n", prs->tok->value);
+                show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+                eat_until(prs, TOK_DOT);
+                return NOP(ln, col);
+            }
+
+            AST *var = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
+            var->var.name = mystrdup(prs->tok->value);
+            var->var.sym = into;
+            eat(prs, TOK_ID);
+            astlist_push(&ast->string_builder.into_vars, var);
+        }
+    }
 
     if (strcmp(prs->tok->value, "WITH") == 0 && strcmp(peek(prs, 1)->value, "POINTER") == 0) {
         eat(prs, TOK_ID);
@@ -1305,7 +1345,9 @@ AST *parse_string_builder(Parser *prs) {
     } else
         ast->string_builder.with_pointer = NULL;
 
-    if (expect_identifier(prs, "END-STRING"))
+    if (unstring && expect_identifier(prs, "END-UNSTRING"))
+        eat(prs, TOK_ID);
+    else if (expect_identifier(prs, "END-STRING"))
         eat(prs, TOK_ID);
 
     return ast;
@@ -1791,6 +1833,26 @@ AST *parse_accept(Parser *prs) {
     ast->accept.dst->var.name = mystrdup(prs->tok->value);
     ast->accept.dst->var.sym = var;
     eat(prs, TOK_ID);
+
+    if (strcmp(prs->tok->value, "FROM") != 0) {
+        ast->accept.from = NULL;
+        return ast;
+    }
+
+    eat(prs, TOK_ID);
+
+    if (strcmp(prs->tok->value, "COMMAND-LINE") == 0) {
+        eat(prs, TOK_ID);
+        ast->accept.from = create_ast(AST_ARGV, prs->tok->ln, prs->tok->col);
+    } else {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "invalid ACCEPT FROM value '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        ast->accept.from = NULL;
+        eat_until(prs, TOK_DOT);
+    }
+
     return ast;
 }
 
@@ -1889,7 +1951,7 @@ AST *parse_procedure_stmt(Parser *prs, ASTList *root) {
         return parse_set(prs);
     else if (strcmp(prs->tok->value, "CALL") == 0)
         return parse_call(prs);
-    else if (strcmp(prs->tok->value, "STRING") == 0)
+    else if (strcmp(prs->tok->value, "STRING") == 0 || strcmp(prs->tok->value, "UNSTRING") == 0)
         return parse_string_builder(prs);
     else if (strcmp(prs->tok->value, "OPEN") == 0)
         return parse_open(prs);

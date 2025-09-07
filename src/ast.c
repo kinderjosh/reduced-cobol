@@ -126,7 +126,7 @@ void delete_ast(AST *ast) {
                 delete_ast(ast->string_builder.stmts[i].value);
 
             free(ast->string_builder.stmts);
-            delete_ast(ast->string_builder.into);
+            delete_astlist(&ast->string_builder.into_vars);
 
             if (ast->string_builder.with_pointer != NULL)
                 delete_ast(ast->string_builder.with_pointer);
@@ -183,6 +183,9 @@ void delete_ast(AST *ast) {
             break;
         case AST_ACCEPT:
             delete_ast(ast->accept.dst);
+
+            if (ast->accept.from != NULL)
+                delete_ast(ast->accept.from);
             break;
         default: break;
     }
@@ -232,6 +235,7 @@ char *asttype_to_string(ASTType type) {
         case AST_INSPECT: return "inspect";
         case AST_ACCEPT: return "accept";
         case AST_ZERO: return "zero";
+        case AST_ARGV: return "argv";
     }
 
     assert(false);

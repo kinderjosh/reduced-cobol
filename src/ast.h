@@ -71,7 +71,8 @@ typedef enum {
     AST_WRITE,
     AST_INSPECT,
     AST_ACCEPT,
-    AST_ZERO
+    AST_ZERO,
+    AST_ARGV
 } ASTType;
 
 typedef struct AST AST;
@@ -251,11 +252,12 @@ typedef struct AST {
         bool bool_value;
 
         struct {
+            bool unstring;
             StringStatement base;
             StringStatement *stmts;
             size_t stmt_count;
             size_t stmt_cap;
-            AST *into;
+            ASTList into_vars;
             AST *with_pointer;
         } string_builder;
 
@@ -312,6 +314,7 @@ typedef struct AST {
 
         struct {
             AST *dst;
+            AST *from;
         } accept;
     };
 } AST;
