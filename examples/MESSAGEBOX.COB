@@ -4,5 +4,5 @@
        IDENTIFICATION DIVISION.
        PROGRAM-ID. MESSAGEBOX.
        PROCEDURE DIVISION.
-           CALL "MessageBoxA" USING NULL, "Hello from RED COBOL!", "Message", 0.
+           CALL "MessageBoxA" USING NULL, "Hello from COBOL!", "Message", 0.
            STOP RUN.
