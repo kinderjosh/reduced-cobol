@@ -208,7 +208,7 @@ char *emit_root(AST *root, bool require_main, char *source_includes) {
     size_t cap = 1024;
 
     globals = malloc(1024);
-    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\nstatic char *read_buffer;\nstatic char file_status[3];\nstatic FILE *last_opened_outfile;\nstatic char *inspect_string;\nstatic size_t inspect_count;\nstatic size_t inspect_string_length;\nstatic bool inspect_found;\nstatic bool inspect_locked;\nstatic char *endptr;\n__attribute__((noreturn)) static void cobol_error() {\nfprintf(stderr, \"COBOL: ERROR: CRITICAL RUNTIME ERROR\\n\");\nexit(EXIT_FAILURE);\n}\n");
+    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\nstatic size_t previous_string_statement_size;\nstatic char *read_buffer;\nstatic char file_status[3];\nstatic FILE *last_opened_outfile;\nstatic char *inspect_string;\nstatic size_t inspect_count;\nstatic size_t inspect_string_length;\nstatic bool inspect_found;\nstatic bool inspect_locked;\nstatic char *endptr;\n__attribute__((noreturn)) static void cobol_error() {\nfprintf(stderr, \"COBOL: ERROR: CRITICAL RUNTIME ERROR\\n\");\nexit(EXIT_FAILURE);\n}\n");
     globals_len = strlen(globals);
     globals_cap = 2048;
 
@@ -731,36 +731,52 @@ char *emit_call(AST *ast) {
     return code;
 }
 
-char *emit_string_stmt(StringStatement *stmt) {
-    char *value = value_to_string(stmt->value);
-    char *increment = malloc((strlen(value) * 2) + 64);
-    char *size = malloc(strlen(value) + 32);
+void emit_string_stmt_previous_size(StringStatement *stmt, char *value, char **increment, char **size) {
+    *increment = malloc((strlen(value) * 2) + 128);
+    *size = malloc(strlen(value) + 128);
 
     if (stmt->value->type == AST_STRING) {
         if (stmt->delimit == DELIM_SIZE) {
-            sprintf(size, "%zu", strlen(stmt->value->constant.string));
-            sprintf(increment, "string_builder_pointer += %zu;\n", strlen(stmt->value->constant.string));
+            sprintf(*size, "%zu", strlen(stmt->value->constant.string));
+            sprintf(*increment, "previous_string_statement_size = %zu;\n", strlen(stmt->value->constant.string));
         } else {
-            sprintf(size, "%zu", strcspn(stmt->value->constant.string, " "));
-            sprintf(increment, "string_builder_pointer += %zu;\n", strcspn(stmt->value->constant.string, " "));
+            sprintf(*size, "%zu", strcspn(stmt->value->constant.string, " "));
+            sprintf(*increment, "previous_string_statement_size = %zu;\n", strcspn(stmt->value->constant.string, " "));
         }
-    } else if (stmt->delimit == DELIM_SIZE) {
-        PictureType type = get_value_type(stmt->value);
-        sprintf(size, "%u", type.count);
-        sprintf(increment, "string_builder_pointer += %u;\n", type.count);
     } else {
-        sprintf(size, "strcspn(%s, \" \")", value);
-        sprintf(increment, "string_builder_pointer += strcspn(%s, \" \");\n", value);
+        // The +1 at the end of the increment is important because it skips the space character,
+        // otherwise the next search would start at the space character, and return 0 size.
+        strcpy(*increment, "previous_string_statement_size = strcspn(string_builder + string_builder_pointer, \" \") + 1;\n");
+        strcpy(*size, "strcspn(string_builder + string_builder_pointer, \" \")\n");
     }
 
-    char *code = malloc(strlen(value) + strlen(increment) + strlen(size) + 94);
+        /*
+    } else if (stmt->delimit == DELIM_SIZE) {
+        //PictureType type = get_value_type(stmt->value);
+        //sprintf(size, "%u", type.count);
+        //sprintf(increment, "previous_string_statement_size = %u;\n", type.count);
+        //sprintf(size, "strcspn(%s, \" \")", value);
+        //sprintf(increment, "previous_string_statement_size = strcspn(%s, \" \");\n", value);
+    } else {
+        //sprintf(size, "strcspn(%s, \" \")", value);
+        //sprintf(increment, "previous_string_statement_size = strcspn(%s, \" \");\n", value);
+    }
+        */
 
-    if (stmt->delimit == DELIM_SIZE)
-        sprintf(code, "strcat(string_builder, %s);\n"
-                      "%s", value, increment);
-    else
-        sprintf(code, "strncat(string_builder, %s, %s);\n"
-                      "%s", value, size, increment);
+}
+
+char *emit_string_stmt(StringStatement *stmt) {
+    char *value = value_to_string(stmt->value);
+    char *increment = NULL;
+    char *size = NULL;
+    emit_string_stmt_previous_size(stmt, value, &increment, &size);
+
+    assert(increment != NULL);
+    assert(size != NULL);
+
+    char *code = malloc(strlen(value) + strlen(increment) + strlen(size) + 94);
+    sprintf(code, "strcat(string_builder, %s);\n"
+                  "%s", value, increment);
 
     free(value);
     free(increment);
@@ -777,7 +793,30 @@ char *emit_string_builder(AST *ast) {
     free(base);
     size_t code_len = strlen(code);
 
+    // For repeated use for every string statement after the first.
+    char *base_value = value_to_string(ast->string_builder.base.value);
+
     for (size_t j = 0; j < ast->string_builder.into_vars.size; j++) {
+        if (j > 0) {
+            // Make sure to do the base each time, but not the first loop.
+            // We don't want to append the base to string_builder again, so we only care
+            // about updating string_stmt_previous_size.
+            char *increment = NULL;
+            char *size = NULL;
+            emit_string_stmt_previous_size(&ast->string_builder.base, base_value, &increment, &size);
+
+            assert(increment != NULL);
+            assert(size != NULL);
+            free(size); // Don't need this.
+
+            const size_t len = strlen(increment);
+
+            code = realloc(code, code_len + len + 1);
+            strcat(code, increment);
+            free(increment);
+            code_len += len;
+        }
+
         for (size_t i = 0; i < ast->string_builder.stmt_count; i++) {
             char *next = emit_string_stmt(&ast->string_builder.stmts[i]);
             const size_t len = strlen(next);
@@ -794,15 +833,25 @@ char *emit_string_builder(AST *ast) {
         char *pointer = ast->string_builder.with_pointer == NULL ? calloc(1, sizeof(char)) 
             : value_to_string(ast->string_builder.with_pointer);
 
-        char *store = malloc(strlen(into) + strlen(pointer) + 128);
+        char *store = malloc(strlen(into) + strlen(pointer) + 256);
+
+        /*
+        if (ast->string_builder.with_pointer == NULL)
+            sprintf(store, "strncpy(%s, string_builder + string_builder_pointer, %u);\n"
+                           "string_builder_pointer += previous_string_statement_size;\n", into, into_type.count + 1);
+        else
+            sprintf(store, "strncpy(%s, string_builder + string_builder_pointer, %u);\n"
+                           "%s = strlen(string_builder);\n"
+                           "string_builder_pointer += previous_string_statement_size;\n", into, into_type.count, pointer);
+                           */
 
         if (ast->string_builder.with_pointer == NULL)
-            sprintf(store, "strncpy(%s, string_builder, %u);\n"
-                           "string_builder[0] = '\\0';\n", into, into_type.count + 1);
+            sprintf(store, "strncpy(%s, string_builder + string_builder_pointer, %u < previous_string_statement_size ? %u : previous_string_statement_size);\n"
+                           "string_builder_pointer += previous_string_statement_size;\n", into, into_type.count + 1, into_type.count + 1);
         else
-            sprintf(store, "strncpy(%s, string_builder, %u);\n"
-                           "%s = string_builder_pointer;\n"
-                           "string_builder[0] = '\\0';\n", into, into_type.count, pointer);
+            sprintf(store, "strncpy(%s, string_builder + string_builder_pointer, %u < previous_string_statement_size ? %u : previous_string_statement_size);\n"
+                           "%s = strlen(string_builder);\n"
+                           "string_builder_pointer += previous_string_statement_size;\n", into, into_type.count + 1, into_type.count + 1, pointer);
 
         free(pointer);
         free(into);
@@ -814,6 +863,7 @@ char *emit_string_builder(AST *ast) {
         code_len += len;
     }
 
+    free(base_value);
     return code;
 }
 
