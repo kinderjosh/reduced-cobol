@@ -151,6 +151,7 @@ bool expect_identifier(Parser *prs, char *id) {
 AST *parse_stmt(Parser *prs);
 
 AST *parse_value(Parser *prs, unsigned int type) {
+    // TODO: Actually kinda check types bruh?
     (void)type;
     AST *value = parse_stmt(prs);
 
@@ -169,6 +170,7 @@ AST *parse_value(Parser *prs, unsigned int type) {
         case AST_SUBSCRIPT:
             if (value->subscript.value == NULL)
                 break;
+
             goto fallthrough;
         default:
 fallthrough:
@@ -180,6 +182,8 @@ fallthrough:
 
     return value;
 }
+
+AST *parse_subscript(Parser *prs, AST *base);
 
 // TOFIX: I really don't like how gross and builtin this shit is.
 AST *parse_any_no_error(Parser *prs) {
@@ -193,6 +197,10 @@ AST *parse_any_no_error(Parser *prs) {
         ast->var.name = mystrdup(prs->tok->value);
         ast->var.sym = var;
         eat(prs, TOK_ID);
+
+        if (prs->tok->type == TOK_LPAREN)
+            return parse_subscript(prs, ast);
+
         return ast;
     }
 
@@ -215,7 +223,7 @@ AST *parse_display(Parser *prs, ASTList *root) {
     jump_to(prs, before);
 
     // End of display.
-    if (thing->type != AST_STRING && thing->type != AST_VAR) {
+    if (thing->type != AST_STRING && thing->type != AST_VAR && thing->type != AST_SUBSCRIPT) {
         delete_ast(thing);
 
         if (!displayed_previously)
@@ -249,7 +257,7 @@ AST *parse_display(Parser *prs, ASTList *root) {
     before = prs->pos;
     AST *next = parse_any_no_error(prs);
 
-    if (next->type != AST_STRING && next->type != AST_VAR) {
+    if (next->type != AST_STRING && next->type != AST_VAR && next->type != AST_SUBSCRIPT) {
         // Invalid thing, stop.
         jump_to(prs, before);
         delete_ast(next);
@@ -1020,6 +1028,11 @@ AST *parse_subscript(Parser *prs, AST *base) {
                 table_size = base->var.sym->count;
                 break;
             }
+            // Strings should also be accessible.
+            else if ((base->var.sym->type.type == TYPE_ALPHABETIC || base->var.sym->type.type == TYPE_ALPHANUMERIC) && base->var.sym->type.count > 0) {
+                table_size = base->var.sym->type.count;
+                break;
+            }
 
             log_error(base->file, base->ln, base->col);
             fprintf(stderr, "accessing non-table variable '%s'\n", base->var.name);
@@ -1077,11 +1090,9 @@ AST *parse_subscript(Parser *prs, AST *base) {
     ast->subscript.index = index;
     eat(prs, TOK_RPAREN);
 
-    if (prs->tok->type == TOK_EQUAL) {
-        eat(prs, TOK_EQUAL);
-        ast->subscript.value = parse_value(prs, TYPE_ANY);
-    } else
-        ast->subscript.value = NULL;
+    // TOFIX: I don't think we actually need this field for COBOL,
+    // it's just a relic from my previous C-like compilers.
+    ast->subscript.value = NULL;
 
     return ast;
 }
@@ -1272,6 +1283,7 @@ AST *parse_string_builder(Parser *prs) {
                 break;
             }
 
+            /*
             Variable *into = find_variable(prs->file, prs->tok->value);
 
             if (!into->used) {
@@ -1297,6 +1309,9 @@ AST *parse_string_builder(Parser *prs) {
             var->var.sym = into;
             eat(prs, TOK_ID);
             astlist_push(&ast->string_builder.into_vars, var);
+            */
+
+            astlist_push(&ast->string_builder.into_vars, parse_value(prs, TYPE_ANY));
         }
     }
 
@@ -2220,6 +2235,7 @@ AST *parse_pic(Parser *prs) {
 
             pic->pic.type.type = TYPE_UNSIGNED_NUMERIC;
             pic->pic.type.count = 0;
+            pic->pic.type.places = RESERVED_INDEX_PLACES;
             pic->pic.count = 0;
             pic->pic.is_index = true;
             pic->pic.is_fd = false;

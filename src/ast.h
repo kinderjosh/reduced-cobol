@@ -6,6 +6,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#define RESERVED_INDEX_PLACES 99
+
 typedef struct {
     enum {
         TYPE_ANY,

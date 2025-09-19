@@ -121,6 +121,16 @@ PictureType get_value_type(AST *ast) {
         case AST_CONDITION: return (PictureType){ .type = TYPE_UNSIGNED_NUMERIC, .count = 0 };
         case AST_SUBSCRIPT: {
             PictureType type = get_value_type(ast->subscript.base);
+
+            assert(ast->subscript.base->type == AST_VAR);
+
+            // A table of strings, the type is still a string, not a character.
+            // TOFIX: this is a fucking mess.
+            if (ast->subscript.base->var.sym->count > 0 && ast->subscript.base->var.sym->type.count > 0) {
+                type.count = ast->subscript.base->var.sym->type.places;
+                return type;
+            }
+
             type.count = 0;
             return type;
         }
@@ -202,13 +212,13 @@ char *emit_list(ASTList *list) {
 
 char *emit_root(AST *root, bool require_main, char *source_includes) {
     char *code = malloc(1024);
-    strcpy(code, "int main(int argc, char **argv) {\n");
+    strcpy(code, "int main(int argc, char **argv) {\nglobal_argc = argc;\nglobal_argv = argv;\n");
 
     size_t len = strlen(code);
     size_t cap = 1024;
 
     globals = malloc(1024);
-    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\nstatic size_t previous_string_statement_size;\nstatic char *read_buffer;\nstatic char file_status[3];\nstatic FILE *last_opened_outfile;\nstatic char *inspect_string;\nstatic size_t inspect_count;\nstatic size_t inspect_string_length;\nstatic bool inspect_found;\nstatic bool inspect_locked;\nstatic char *endptr;\n__attribute__((noreturn)) static void cobol_error() {\nfprintf(stderr, \"COBOL: ERROR: CRITICAL RUNTIME ERROR\\n\");\nexit(EXIT_FAILURE);\n}\n");
+    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\nstatic size_t previous_string_statement_size;\nstatic char *read_buffer;\nstatic char file_status[3];\nstatic FILE *last_opened_outfile;\nstatic char *inspect_string;\nstatic size_t inspect_count;\nstatic size_t inspect_string_length;\nstatic bool inspect_found;\nstatic bool inspect_locked;\nstatic char *endptr;\nint global_argc;\nchar **global_argv;\n__attribute__((noreturn)) static void cobol_error() {\nfprintf(stderr, \"COBOL: ERROR: CRITICAL RUNTIME ERROR\\n\");\nexit(EXIT_FAILURE);\n}\n");
     globals_len = strlen(globals);
     globals_cap = 2048;
 
@@ -266,6 +276,8 @@ char *picturetype_to_format_specifier(PictureType *type) {
 
     if (type->type == TYPE_DECIMAL_NUMERIC)
         sprintf(spec, "%%0%u.%ulf", type->places + type->decimal_places + 1, type->decimal_places);
+    else if (type->places == RESERVED_INDEX_PLACES) // Reserved for INDEX vars
+        strcpy(spec, "%u");
     else if (type->type == TYPE_SIGNED_NUMERIC)
         sprintf(spec, "%%.%ud", type->places);
     else if (type->type == TYPE_UNSIGNED_NUMERIC)
@@ -283,8 +295,10 @@ char *emit_display(AST *ast) {
     char *arg = value_to_string(value);
     PictureType type = get_value_type(ast->display.value);
 
+    /*
     if (ast->display.value->type == AST_SUBSCRIPT)
         type.count = 0;
+        */
 
     char *spec = picturetype_to_format_specifier(&type);
     char *code = malloc(strlen(arg) + strlen(spec) + 42);
@@ -312,7 +326,7 @@ char *emit_pic(AST *ast) {
 
         if (ast->pic.type.count > 0) {
             if (ast->pic.count > 0)
-                sprintf(code, "%s %s[%u][%u];\n", type, name, ast->pic.type.count, ast->pic.count);
+                sprintf(code, "%s %s[%u][%u];\n", type, name, ast->pic.count, ast->pic.type.count);
             else
                 sprintf(code, "%s %s[%u];\n", type, name, ast->pic.type.count);
         } else if (ast->pic.count > 0)
@@ -327,7 +341,7 @@ char *emit_pic(AST *ast) {
             sprintf(code, "FILE *%s = NULL;\n", name);
         else if (ast->pic.type.count > 0) {
             if (ast->pic.count > 0)
-                sprintf(code, "%s %s[%u][%u];\n", type, name, ast->pic.type.count, ast->pic.count);
+                sprintf(code, "%s %s[%u][%u];\n", type, name, ast->pic.count, ast->pic.type.count);
             else
                 sprintf(code, "%s %s[%u] = %s;\n", type, name, ast->pic.type.count, value);
         } else if (ast->pic.count > 0)
@@ -974,13 +988,13 @@ char *emit_write(AST *ast) {
 
 char *emit_stringtally_phase1(StringTallyPhase1 *phase) {
     char *value = value_to_string(phase->value);
-    char *modifier = phase->modifier == NULL ? calloc(1, sizeof(char)) : value_to_string(phase->modifier);
-    char *code = malloc(strlen(value) + strlen(modifier) + 109);
+    char *modifier = phase->modifier == NULL ? mystrdup(value) : value_to_string(phase->modifier);
+    char *code = malloc(strlen(value) + strlen(modifier) + 128);
 
     if (phase->before)
         sprintf(code, "if (inspect_char == %s)\nbreak;\nelse if (inspect_char == %s)\ninspect_count++;\n", modifier, value);
     else
-        sprintf(code, "if (inspect_char == %s)\ninspect_found = true;\nelse if (inspect_char == %s && inspect_found)\ninspect_count++;\n", modifier, value);
+        sprintf(code, "if (inspect_char == %s && !inspect_found)\ninspect_found = true;\nif (inspect_char == %s && inspect_found)\ninspect_count++;\n", modifier, value);
 
     free(value);
     free(modifier);
@@ -1111,12 +1125,12 @@ char *emit_inspect(AST *ast) {
 
 char *emit_accept_argv(AST *ast) {
     char *dst = value_to_string(ast->accept.dst);
-    char *code = malloc((strlen(dst) * 3) + 95);
+    char *code = malloc((strlen(dst) * 3) + 116);
 
-    sprintf(code, "strcpy(%s, argv[0]);\n"
-                  "for (int i = 1; i < argc; i++) {\n"
+    sprintf(code, "strcpy(%s, global_argv[0]);\n"
+                  "for (int i = 1; i < global_argc; i++) {\n"
                   "strcat(%s, \" \");\n"
-                  "strcat(%s, argv[i]);\n"
+                  "strcat(%s, global_argv[i]);\n"
                   "}\n", dst, dst, dst);
 
     free(dst);
