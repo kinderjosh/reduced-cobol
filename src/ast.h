@@ -42,6 +42,7 @@ typedef enum {
     AST_STRING,
     AST_VAR,
     AST_STOP,
+    AST_STOP_RUN,
     AST_DISPLAY,
     AST_PIC,
     AST_MOVE,

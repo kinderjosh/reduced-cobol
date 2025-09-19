@@ -4,6 +4,7 @@
 #include "token.h"
 #include "ast.h"
 #include <stdio.h>
+#include <stdbool.h>
 
 typedef enum {
     DIV_NONE,
@@ -24,6 +25,7 @@ typedef struct {
     Token *tok;
     size_t pos;
     char program_id[65];
+    bool in_main;
 } Parser;
 
 AST *parse_file(char *file);

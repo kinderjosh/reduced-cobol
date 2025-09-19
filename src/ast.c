@@ -202,6 +202,7 @@ char *asttype_to_string(ASTType type) {
         case AST_FLOAT: return "float";
         case AST_STRING: return "string";
         case AST_VAR: return "variable";
+        case AST_STOP_RUN:
         case AST_STOP: return "stop";
         case AST_DISPLAY: return "display";
         case AST_PIC: return "picture";

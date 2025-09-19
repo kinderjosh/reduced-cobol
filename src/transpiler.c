@@ -268,6 +268,11 @@ char *emit_root(AST *root, bool require_main, char *source_includes) {
 
 char *emit_stop(AST *ast) {
     (void)ast;
+    return mystrdup("return;\n");
+}
+
+char *emit_stop_run(AST *ast) {
+    (void)ast;
     return mystrdup("return 0;\n");
 }
 

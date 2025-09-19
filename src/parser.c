@@ -87,7 +87,7 @@ Parser create_parser(char *file) {
     // Add the EOF.
     tokens[token_count++] = tok;
     delete_lexer(&lex);
-    return (Parser){ .file = file, .tokens = tokens, .token_count = token_count, .tok = &tokens[0], .pos = 0, .program_id = {0} };
+    return (Parser){ .file = file, .tokens = tokens, .token_count = token_count, .tok = &tokens[0], .pos = 0, .program_id = {0}, .in_main = false };
 }
 
 void delete_parser(Parser *prs) {
@@ -665,6 +665,7 @@ bool validate_stmt(AST *stmt) {
             delete_ast(stmt);
             return false;
         case AST_STOP:
+        case AST_STOP_RUN:
         case AST_DISPLAY:
         case AST_PIC:
         case AST_MOVE:
@@ -978,6 +979,7 @@ AST *parse_perform(Parser *prs) {
 }
 
 AST *parse_procedure(Parser *prs) {
+    prs->in_main = false;
     const size_t ln = prs->tok->ln;
     const size_t col = prs->tok->col;
 
@@ -1935,7 +1937,7 @@ AST *parse_procedure_stmt(Parser *prs, ASTList *root) {
         if (expect_identifier(prs, "RUN"))
             eat(prs, TOK_ID);
 
-        return create_ast(AST_STOP, prs->tok->ln, prs->tok->col);
+        return create_ast(prs->in_main ? AST_STOP_RUN : AST_STOP, prs->tok->ln, prs->tok->col);
     } else if (strcmp(prs->tok->value, "DISPLAY") == 0) {
         displayed_previously = false;
         first_display = true;
@@ -2672,6 +2674,8 @@ void parse_data_division(Parser *prs, bool ignore_working_storage) {
 */
 
 void parse_procedure_division(Parser *prs) {
+    prs->in_main = true;
+
     while (!should_break_from(prs, "DIVISION")) {
         while (prs->tok->type == TOK_DOT)
             eat(prs, TOK_DOT);
@@ -2690,6 +2694,8 @@ void parse_procedure_division(Parser *prs) {
         if (validate_stmt(stmt))
             astlist_push(root_ptr, stmt);
     }
+
+    prs->in_main = false;
 }
 
 void parse_division(Parser *prs) {
