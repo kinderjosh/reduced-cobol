@@ -1871,6 +1871,8 @@ AST *parse_accept(Parser *prs) {
     return ast;
 }
 
+AST *parse_not(Parser *prs);
+
 AST *parse_id(Parser *prs) {
     const size_t ln = prs->tok->ln;
     const size_t col = prs->tok->col;
@@ -1886,7 +1888,8 @@ AST *parse_id(Parser *prs) {
     } else if (strcmp(prs->tok->value, "ZERO") == 0) {
         eat(prs, TOK_ID);
         return create_ast(AST_ZERO, ln, col);
-    }
+    } else if (strcmp(prs->tok->value, "NOT") == 0)
+        return parse_not(prs);
 
     Variable *sym;
 
