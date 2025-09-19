@@ -582,7 +582,7 @@ char *emit_if(AST *ast) {
     if (ast->if_stmt.else_body.size > 0) {
         char *else_body = emit_list(&ast->if_stmt.else_body);
         code = malloc(strlen(condition) + strlen(body) + strlen(else_body) + 27);
-        sprintf(code, "if %s {\n%s\n} else {\n%s}\n", condition, body, else_body);
+        sprintf(code, "if %s {\n%s} else {\n%s}\n", condition, body, else_body);
         free(else_body);
     } else {
         code = malloc(strlen(condition) + strlen(body) + 15);
