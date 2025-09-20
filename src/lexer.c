@@ -193,7 +193,7 @@ static Token lex_digit(Lexer *lex) {
         step(lex);
     }
 
-    if (lex->cur == '0' && (peek(lex, 1) == 'x' || isdigit(peek(lex, 1)))) {
+    if (lex->cur == '0' && peek(lex, 1) == 'x') {
         free(value);
         return lex_prefixed_digit(lex, col, has_minus);
     }
