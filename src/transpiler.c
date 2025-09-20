@@ -1162,6 +1162,7 @@ char *emit_accept(AST *ast) {
 char *emit_stmt(AST *ast) {
     switch (ast->type) {
         case AST_NOP: return calloc(1, sizeof(char));
+        case AST_STOP_RUN: return emit_stop_run(ast);
         case AST_STOP: return emit_stop(ast);
         case AST_DISPLAY: return emit_display(ast);
         case AST_PIC: return emit_pic(ast);
