@@ -827,8 +827,8 @@ char *emit_unstring(AST *ast) {
     char *increment;
     char *size;
     emit_string_stmt_previous_size(&ast->string_splitter.base, base, &increment, &size, true);
-    assert(value != NULL);
     assert(increment != NULL);
+    assert(size != NULL);
 
     for (size_t i = 0; i < ast->string_splitter.into_vars.size; i++) {
         char *var = value_to_string(ast->string_splitter.into_vars.items[i]);
@@ -1226,6 +1226,7 @@ char *emit_stmt(AST *ast) {
         case AST_WRITE: return emit_write(ast);
         case AST_INSPECT: return emit_inspect(ast);
         case AST_ACCEPT: return emit_accept(ast);
+        case AST_EXIT: return mystrdup("exit(EXIT_SUCCESS);\n");
         default: break;
     }
 

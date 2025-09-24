@@ -76,7 +76,8 @@ typedef enum {
     AST_INSPECT,
     AST_ACCEPT,
     AST_ZERO,
-    AST_ARGV
+    AST_ARGV,
+    AST_EXIT
 } ASTType;
 
 typedef struct AST AST;

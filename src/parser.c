@@ -694,7 +694,8 @@ bool validate_stmt(AST *stmt) {
         case AST_READ:
         case AST_WRITE:
         case AST_INSPECT:
-        case AST_ACCEPT: break;
+        case AST_ACCEPT:
+        case AST_EXIT: break;
         default:
             log_error(stmt->file, stmt->ln, stmt->col);
             fprintf(stderr, "invalid clause '%s'\n", asttype_to_string(stmt->type));
@@ -1838,6 +1839,18 @@ AST *parse_accept(Parser *prs) {
     return ast;
 }
 
+AST *parse_exit(Parser *prs) {
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, "PROGRAM")) {
+        eat_until(prs, TOK_DOT);
+        return NOP(prs->tok->ln, prs->tok->col);
+    }
+
+    eat(prs, TOK_ID);
+    return create_ast(AST_EXIT, prs->tok->ln, prs->tok->col);
+}
+
 AST *parse_not(Parser *prs);
 
 AST *parse_id(Parser *prs) {
@@ -1952,6 +1965,8 @@ AST *parse_procedure_stmt(Parser *prs, ASTList *root) {
         return parse_inspect(prs);
     else if (strcmp(prs->tok->value, "ACCEPT") == 0)
         return parse_accept(prs);
+    else if (strcmp(prs->tok->value, "EXIT") == 0)
+        return parse_exit(prs);
 
     log_error(prs->file, prs->tok->ln, prs->tok->col);
     fprintf(stderr, "invalid clause '%s' in PROCEDURE DIVISION\n", prs->tok->value);

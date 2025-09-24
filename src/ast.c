@@ -244,6 +244,7 @@ char *asttype_to_string(ASTType type) {
         case AST_ACCEPT: return "accept";
         case AST_ZERO: return "zero";
         case AST_ARGV: return "argv";
+        case AST_EXIT: return "exit";
     }
 
     assert(false);
