@@ -126,10 +126,14 @@ void delete_ast(AST *ast) {
                 delete_ast(ast->string_builder.stmts[i].value);
 
             free(ast->string_builder.stmts);
-            delete_astlist(&ast->string_builder.into_vars);
+            delete_ast(ast->string_builder.into_var);
 
             if (ast->string_builder.with_pointer != NULL)
                 delete_ast(ast->string_builder.with_pointer);
+            break;
+        case AST_STRING_SPLITTER:
+            delete_ast(ast->string_splitter.base.value);
+            delete_astlist(&ast->string_splitter.into_vars);
             break;
         case AST_OPEN:
             delete_ast(ast->open.filename);
@@ -139,8 +143,10 @@ void delete_ast(AST *ast) {
             break;
         case AST_SELECT:
             delete_ast(ast->select.fd_var);
-            free(ast->select.filename);
-            delete_ast(ast->select.filestatus_var);
+            delete_ast(ast->select.filename);
+            
+            if (ast->select.filestatus_var != NULL)
+                delete_ast(ast->select.filestatus_var);
             break;
         case AST_READ:
             delete_ast(ast->read.fd);
@@ -228,6 +234,7 @@ char *asttype_to_string(ASTType type) {
         case AST_NULL: return "null";
         case AST_BOOL: return "bool";
         case AST_STRING_BUILDER: return "string";
+        case AST_STRING_SPLITTER: return "unstring";
         case AST_OPEN: return "open";
         case AST_CLOSE: return "close";
         case AST_SELECT: return "select";

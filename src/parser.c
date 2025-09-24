@@ -20,7 +20,7 @@
 #define IS_MATH(prs) (prs->tok->type == TOK_PLUS || prs->tok->type == TOK_MINUS || prs->tok->type == TOK_STAR || prs->tok->type == TOK_SLASH || strcmp(prs->tok->value, "MOD") == 0)
 #define IS_CONDITION(prs) (prs->tok->type == TOK_EQ || prs->tok->type == TOK_EQUAL || prs->tok->type == TOK_NEQ || prs->tok->type == TOK_LT || prs->tok->type == TOK_LTE || prs->tok->type == TOK_GT || prs->tok->type == TOK_GTE || strcmp(prs->tok->value, "IS") == 0 || strcmp(prs->tok->value, "AND") == 0 || strcmp(prs->tok->value, "OR") == 0 || (strcmp(prs->tok->value, "NOT") == 0 && strcmp(peek(prs, 1)->value, "EQUAL") == 0))
 
-#define TABLE_SIZE 1000
+#define TABLE_SIZE 10000
 
 static Variable variables[TABLE_SIZE];
 
@@ -284,6 +284,7 @@ AST *parse_move(Parser *prs) {
     const size_t col = prs->tok->col;
     eat(prs, TOK_ID);
 
+    /*
     PictureType pictype = { .type = TYPE_ANY, .count = 0 };
     Token *var_tok = peek(prs, 2);
     AST *var;
@@ -332,9 +333,11 @@ AST *parse_move(Parser *prs) {
         var = parse_stmt(prs);
         jump_to(prs, old_pos);
     }
+    */
 
     AST *ast = create_ast(AST_MOVE, ln, col);
-    ast->move.src = parse_value(prs, pictype.type);
+    //ast->move.src = parse_value(prs, type);
+    ast->move.src = parse_value(prs, TYPE_ANY);
 
     if (!expect_identifier(prs, "TO")) {
         eat_until(prs, TOK_DOT);
@@ -342,7 +345,9 @@ AST *parse_move(Parser *prs) {
     }
 
     eat(prs, TOK_ID);
-    ast->move.dst = var;
+    //ast->move.dst = var;
+    ast->move.dst = parse_value(prs, TYPE_ANY);
+    /*
     eat(prs, TOK_ID);
 
     // Skip any () if there.
@@ -350,6 +355,7 @@ AST *parse_move(Parser *prs) {
         eat_until(prs, TOK_RPAREN);
         eat(prs, TOK_RPAREN);
     }
+    */
 
     return ast;
 }
@@ -681,6 +687,7 @@ bool validate_stmt(AST *stmt) {
         case AST_PERFORM_UNTIL:
         case AST_CALL:
         case AST_STRING_BUILDER:
+        case AST_STRING_SPLITTER:
         case AST_OPEN:
         case AST_CLOSE:
         case AST_SELECT:
@@ -871,7 +878,10 @@ AST *parse_perform_varying(Parser *prs, size_t ln, size_t col) {
     }
 
     eat(prs, TOK_ID);
-    eat(prs, TOK_DOT);
+
+    if (prs->tok->type == TOK_DOT)
+        eat(prs, TOK_DOT);
+
     return ast;
 }
 
@@ -891,7 +901,9 @@ AST *parse_perform_until(Parser *prs, size_t ln, size_t col) {
 
     if (expect_identifier(prs, "END-PERFORM")) {
         eat(prs, TOK_ID);
-        eat(prs, TOK_DOT);
+
+        if (prs->tok->type == TOK_DOT)
+            eat(prs, TOK_DOT);
     }
     return ast;
 }
@@ -1239,16 +1251,38 @@ StringStatement parse_string_stmt(Parser *prs) {
     return stmt;
 }
 
+AST *parse_unstring(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+    eat(prs, TOK_ID);
+
+    AST *ast = create_ast(AST_STRING_SPLITTER, ln, col);
+    ast->string_splitter.base = parse_string_stmt(prs);
+    ast->string_splitter.into_vars = create_astlist();
+
+    while (prs->tok->type != TOK_EOF && strcmp(prs->tok->value, "END-UNSTRING") != 0 && strcmp(prs->tok->value, "INTO") != 0)
+        astlist_push(&ast->string_splitter.into_vars, parse_value(prs, TYPE_ANY));
+
+    if (!expect_identifier(prs, "INTO")) {
+        eat_until(prs, TOK_DOT);
+        return ast;
+    }
+
+    eat(prs, TOK_ID);
+
+    while (prs->tok->type != TOK_EOF && strcmp(prs->tok->value, "END-UNSTRING") != 0)
+        astlist_push(&ast->string_splitter.into_vars, parse_value(prs, TYPE_ANY));
+
+    if (expect_identifier(prs, "END-UNSTRING"))
+        eat(prs, TOK_ID);
+
+    return ast;
+}
+
 AST *parse_string_builder(Parser *prs) {
     const size_t ln = prs->tok->ln;
     const size_t col = prs->tok->col;
-    bool unstring = strcmp(prs->tok->value, "UNSTRING") == 0;
     eat(prs, TOK_ID);
-
-    if (!expect_identifier(prs, NULL)) {
-        eat_until(prs, TOK_DOT);
-        return NOP(ln, col);
-    }
 
     // (My apostraphe key died halfway through this comment)
     // String manipulation in COBOL SUCKS. From what Ive seen,
@@ -1273,48 +1307,9 @@ AST *parse_string_builder(Parser *prs) {
         ast->string_builder.stmts[ast->string_builder.stmt_count++] = stmt;
     }
 
-    ast->string_builder.into_vars = create_astlist();
-
     if (expect_identifier(prs, "INTO")) {
         eat(prs, TOK_ID);
-
-        while (prs->tok->type != TOK_EOF && strcmp(prs->tok->value, "WITH") != 0 &&
-                strcmp(prs->tok->value, "END-STRING") != 0 && strcmp(prs->tok->value, "END-UNSTRING") != 0) {
-            if (!expect_identifier(prs, NULL)) {
-                eat_until(prs, TOK_DOT);
-                break;
-            }
-
-            /*
-            Variable *into = find_variable(prs->file, prs->tok->value);
-
-            if (!into->used) {
-                log_error(prs->file, prs->tok->ln, prs->tok->col);
-                fprintf(stderr, "undefined variable '%s'\n", prs->tok->value);
-                show_error(prs->file, prs->tok->ln, prs->tok->col);
-
-                eat_until(prs, TOK_DOT);
-                return NOP(ln, col);
-            } else if ((into->type.type != TYPE_ALPHABETIC && into->type.type != TYPE_ALPHANUMERIC) ||
-                    into->type.count == 0) {
-
-                log_error(prs->file, prs->tok->ln, prs->tok->col);
-                fprintf(stderr, "unstringing into non-string variable '%s'\n", prs->tok->value);
-                show_error(prs->file, prs->tok->ln, prs->tok->col);
-
-                eat_until(prs, TOK_DOT);
-                return NOP(ln, col);
-            }
-
-            AST *var = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
-            var->var.name = mystrdup(prs->tok->value);
-            var->var.sym = into;
-            eat(prs, TOK_ID);
-            astlist_push(&ast->string_builder.into_vars, var);
-            */
-
-            astlist_push(&ast->string_builder.into_vars, parse_value(prs, TYPE_ANY));
-        }
+        ast->string_builder.into_var = parse_value(prs, TYPE_ANY);
     }
 
     if (strcmp(prs->tok->value, "WITH") == 0 && strcmp(peek(prs, 1)->value, "POINTER") == 0) {
@@ -1327,44 +1322,11 @@ AST *parse_string_builder(Parser *prs) {
             return ast;
         }
 
-        Variable *var = find_variable(prs->file, prs->tok->value);
-
-        if (!var->used) {
-            log_error(prs->file, prs->tok->ln, prs->tok->col);
-            fprintf(stderr, "undefined variable '%s'\n", prs->tok->value);
-            show_error(prs->file, prs->tok->ln, prs->tok->col);
-
-            eat_until(prs, TOK_DOT);
-            ast->string_builder.with_pointer = NULL;
-            return ast;
-        } else if (var->type.type != TYPE_DECIMAL_NUMERIC && var->type.type != TYPE_SIGNED_NUMERIC && var->type.type != TYPE_UNSIGNED_NUMERIC) {
-            log_error(prs->file, prs->tok->ln, prs->tok->col);
-            fprintf(stderr, "string pointer variable '%s' has a non-numeric picture type\n", prs->tok->value);
-            show_error(prs->file, prs->tok->ln, prs->tok->col);
-
-            eat_until(prs, TOK_DOT);
-            ast->string_builder.with_pointer = NULL;
-            return ast;
-        } else if (var->type.count > 0) {
-            log_error(prs->file, prs->tok->ln, prs->tok->col);
-            fprintf(stderr, "string pointer variable '%s' is a table\n", prs->tok->value);
-            show_error(prs->file, prs->tok->ln, prs->tok->col);
-
-            eat_until(prs, TOK_DOT);
-            ast->string_builder.with_pointer = NULL;
-            return ast;
-        }
-
-        ast->string_builder.with_pointer = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
-        ast->string_builder.with_pointer->var.name = mystrdup(prs->tok->value);
-        ast->string_builder.with_pointer->var.sym = var;
-        eat(prs, TOK_ID);
+        ast->string_builder.with_pointer = parse_value(prs, TYPE_ANY);
     } else
         ast->string_builder.with_pointer = NULL;
 
-    if (unstring && expect_identifier(prs, "END-UNSTRING"))
-        eat(prs, TOK_ID);
-    else if (expect_identifier(prs, "END-STRING"))
+    if (expect_identifier(prs, "END-STRING"))
         eat(prs, TOK_ID);
 
     return ast;
@@ -1386,7 +1348,7 @@ AST *parse_open(Parser *prs) {
         open_type = OPEN_INPUT;
     else if (strcmp(prs->tok->value, "OUTPUT") == 0)
         open_type = OPEN_OUTPUT;
-    else if (strcmp(prs->tok->value, "IO") == 0)
+    else if (strcmp(prs->tok->value, "I-O") == 0)
         open_type = OPEN_IO;
     else if (strcmp(prs->tok->value, "EXTEND") == 0)
         open_type = OPEN_EXTEND;
@@ -1825,6 +1787,7 @@ AST *parse_accept(Parser *prs) {
     const size_t col = prs->tok->col;
     eat(prs, TOK_ID);
 
+    /*
     Variable *var = find_variable(prs->file, prs->tok->value);
 
     if (!var->used) {
@@ -1844,12 +1807,14 @@ AST *parse_accept(Parser *prs) {
         eat_until(prs, TOK_DOT);
         return NOP(ln, col);
     }
+    */
 
     AST *ast = create_ast(AST_ACCEPT, ln, col);
-    ast->accept.dst = create_ast(AST_VAR, ln, col);
-    ast->accept.dst->var.name = mystrdup(prs->tok->value);
-    ast->accept.dst->var.sym = var;
-    eat(prs, TOK_ID);
+    ast->accept.dst = parse_value(prs, TYPE_ANY);
+    //ast->accept.dst = create_ast(AST_VAR, ln, col);
+    //ast->accept.dst->var.name = mystrdup(prs->tok->value);
+    //ast->accept.dst->var.sym = var;
+    //eat(prs, TOK_ID);
 
     if (strcmp(prs->tok->value, "FROM") != 0) {
         ast->accept.from = NULL;
@@ -1971,8 +1936,10 @@ AST *parse_procedure_stmt(Parser *prs, ASTList *root) {
         return parse_set(prs);
     else if (strcmp(prs->tok->value, "CALL") == 0)
         return parse_call(prs);
-    else if (strcmp(prs->tok->value, "STRING") == 0 || strcmp(prs->tok->value, "UNSTRING") == 0)
+    else if (strcmp(prs->tok->value, "STRING") == 0)
         return parse_string_builder(prs);
+    else if (strcmp(prs->tok->value, "UNSTRING") == 0)
+        return parse_unstring(prs);
     else if (strcmp(prs->tok->value, "OPEN") == 0)
         return parse_open(prs);
     else if (strcmp(prs->tok->value, "CLOSE") == 0)
@@ -2418,6 +2385,7 @@ AST *parse_select(Parser *prs) {
 
     eat(prs, TOK_ID);
 
+    /*
     if (prs->tok->type != TOK_STRING) {
         log_error(prs->file, prs->tok->ln, prs->tok->col);
         fprintf(stderr, "expected filename string but found '%s'\n", tokentype_to_string(prs->tok->type));
@@ -2429,7 +2397,8 @@ AST *parse_select(Parser *prs) {
 
     char *filename = mystrdup(prs->tok->value);
     eat(prs, TOK_STRING);
-
+    */
+    AST *filename = parse_value(prs, TYPE_ANY);
     unsigned int organization = ORG_NONE;
 
     if (strcmp(prs->tok->value, "ORGANIZATION") == 0) {
@@ -2459,17 +2428,14 @@ AST *parse_select(Parser *prs) {
         }
     }
 
-    AST *filestatus_var;
+    AST *filestatus_var = NULL;
 
-    if (strcmp(prs->tok->value, "FILE") != 0) {
-        filestatus_var = NOP(ln, col);
+    if (strcmp(prs->tok->value, "FILE") != 0)
         goto build_ast;
-    }
 
     eat(prs, TOK_ID);
 
     if (!expect_identifier(prs, "STATUS")) {
-        filestatus_var = NOP(ln, col);
         eat_until(prs, TOK_DOT);
         goto build_ast;
     }
@@ -2477,7 +2443,6 @@ AST *parse_select(Parser *prs) {
     eat(prs, TOK_ID);
 
     if (!expect_identifier(prs, "IS")) {
-        filestatus_var = NOP(ln, col);
         eat_until(prs, TOK_DOT);
         goto build_ast;
     }

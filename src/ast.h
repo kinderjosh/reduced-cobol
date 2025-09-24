@@ -67,6 +67,7 @@ typedef enum {
     AST_NULL,
     AST_BOOL,
     AST_STRING_BUILDER,
+    AST_STRING_SPLITTER,
     AST_OPEN,
     AST_CLOSE,
     AST_SELECT,
@@ -255,14 +256,18 @@ typedef struct AST {
         bool bool_value;
 
         struct {
-            bool unstring;
             StringStatement base;
             StringStatement *stmts;
             size_t stmt_count;
             size_t stmt_cap;
-            ASTList into_vars;
+            AST *into_var;
             AST *with_pointer;
         } string_builder;
+
+        struct {
+            StringStatement base;
+            ASTList into_vars;
+        } string_splitter;
 
         struct {
             AST *filename;
@@ -279,7 +284,7 @@ typedef struct AST {
 
         struct {
             AST *fd_var;
-            char *filename;
+            AST *filename;
             AST *filestatus_var;
 
             enum {
