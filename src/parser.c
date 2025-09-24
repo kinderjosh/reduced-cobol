@@ -1089,7 +1089,8 @@ AST *parse_subscript(Parser *prs, AST *base) {
                 log_error(index->file, index->ln, index->col);
                 fprintf(stderr, "subscript variable '%s' is a table\n", index->var.name);
                 show_error(index->file, index->ln, index->col);
-            } else if (index->var.sym->type.type != TYPE_UNSIGNED_NUMERIC && index->var.sym->type.type != TYPE_SIGNED_NUMERIC) {
+            } else if (index->var.sym->type.type != TYPE_UNSIGNED_NUMERIC && index->var.sym->type.type != TYPE_SIGNED_NUMERIC && 
+                    index->var.sym->type.type != TYPE_SIGNED_SUPRESSED_NUMERIC && index->var.sym->type.type != TYPE_UNSIGNED_SUPRESSED_NUMERIC) {
                 log_error(index->file, index->ln, index->col);
                 fprintf(stderr, "subscript variable '%s' is not numeric\n", index->var.name);
                 show_error(index->file, index->ln, index->col);
@@ -1582,7 +1583,8 @@ StringTally parse_stringtally(Parser *prs) {
 
         eat_until(prs, TOK_DOT);
         return NOTALLY;
-    } else if ((output->type.type != TYPE_DECIMAL_NUMERIC && output->type.type != TYPE_SIGNED_NUMERIC && output->type.type != TYPE_UNSIGNED_NUMERIC) 
+    } else if ((output->type.type != TYPE_DECIMAL_NUMERIC && output->type.type != TYPE_SIGNED_NUMERIC && output->type.type != TYPE_UNSIGNED_NUMERIC &&
+            output->type.type != TYPE_SIGNED_SUPRESSED_NUMERIC && output->type.type != TYPE_UNSIGNED_SUPRESSED_NUMERIC && output->type.type != TYPE_DECIMAL_SUPRESSED_NUMERIC) 
             || output->count > 0) {
 
         log_error(prs->file, prs->tok->ln, prs->tok->col);
@@ -2072,17 +2074,30 @@ AST *parse_pic(Parser *prs) {
     } else if (strcmp(prs->tok->value, "9") == 0) {
         type.type = TYPE_UNSIGNED_NUMERIC;
         eat(prs, prs->tok->type);
+    } else if (strcmp(prs->tok->value, "SZ") == 0 || strcmp(prs->tok->value, "SZ9") == 0) {
+        type.type = TYPE_SIGNED_SUPRESSED_NUMERIC;
+        eat(prs, prs->tok->type);
     } else if (strcmp(prs->tok->value, "9V9") == 0) {
         type.type = TYPE_UNSIGNED_NUMERIC;
+        eat(prs, prs->tok->type);
+        implicit_count = true;
+    } else if (strcmp(prs->tok->value, "ZV9") == 0) {
+        type.type = TYPE_DECIMAL_SUPRESSED_NUMERIC;
         eat(prs, prs->tok->type);
         implicit_count = true;
     } else if (strcmp(prs->tok->value, "S9") == 0) {
         type.type = TYPE_SIGNED_NUMERIC;
         eat(prs, prs->tok->type);
+    } else if (strcmp(prs->tok->value, "Z9") == 0) {
+        type.type = TYPE_UNSIGNED_SUPRESSED_NUMERIC;
+        eat(prs, prs->tok->type);
     } else if (strcmp(prs->tok->value, "S9V9") == 0) {
         type.type = TYPE_SIGNED_NUMERIC;
         eat(prs, prs->tok->type);
         implicit_count = true;
+    } else if (strcmp(prs->tok->value, "SZ9V9") == 0) {
+        type.type = TYPE_DECIMAL_SUPRESSED_NUMERIC;
+        eat(prs, prs->tok->type);
     } else {
         log_error(prs->file, prs->tok->ln, prs->tok->col);
         fprintf(stderr, "invalid picture type '%s'\n", prs->tok->value);
@@ -2127,13 +2142,14 @@ AST *parse_pic(Parser *prs) {
     }
  
     if (strcmp(prs->tok->value, "V9") == 0 || implicit_count) {
-        if (type.type != TYPE_SIGNED_NUMERIC) {
+        if (type.type != TYPE_SIGNED_NUMERIC && type.type != TYPE_SIGNED_SUPRESSED_NUMERIC) {
             log_error(prs->file, ast->ln, ast->col);
             fprintf(stderr, "declaring variable '%s' with decimal points but it is unsigned\n", name);
             show_error(prs->file, ast->ln, ast->col);
         }
 
-        ast->pic.type.type = TYPE_DECIMAL_NUMERIC;
+        ast->pic.type.type = type.type == TYPE_SIGNED_SUPRESSED_NUMERIC || type.type == TYPE_UNSIGNED_SUPRESSED_NUMERIC ?
+            TYPE_DECIMAL_SUPRESSED_NUMERIC : TYPE_DECIMAL_NUMERIC;
 
         if (!implicit_count)
             eat(prs, TOK_ID);
@@ -2220,9 +2236,9 @@ AST *parse_pic(Parser *prs) {
             pic->pic.value = create_ast(AST_INT, prs->tok->ln, prs->tok->col);
             pic->pic.value->constant.i32 = 1;
 
-            pic->pic.type.type = TYPE_UNSIGNED_NUMERIC;
+            pic->pic.type.type = TYPE_UNSIGNED_SUPRESSED_NUMERIC;
             pic->pic.type.count = 0;
-            pic->pic.type.places = RESERVED_INDEX_PLACES;
+            pic->pic.type.places = 0;
             pic->pic.count = 0;
             pic->pic.is_index = true;
             pic->pic.is_fd = false;

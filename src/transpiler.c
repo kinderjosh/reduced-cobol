@@ -27,11 +27,11 @@ static size_t function_predefs_len;
 static size_t function_predefs_cap;
 
 char *picturetype_to_c(unsigned int type) {
-    if (type == TYPE_DECIMAL_NUMERIC)
+    if (type == TYPE_DECIMAL_NUMERIC || type == TYPE_DECIMAL_SUPRESSED_NUMERIC)
         return "double";
-    else if (type == TYPE_SIGNED_NUMERIC)
+    else if (type == TYPE_SIGNED_NUMERIC || type == TYPE_SIGNED_SUPRESSED_NUMERIC)
         return "int";
-    else if (type == TYPE_UNSIGNED_NUMERIC)
+    else if (type == TYPE_UNSIGNED_NUMERIC || type == TYPE_UNSIGNED_SUPRESSED_NUMERIC)
         return "unsigned int";
 
     return "char";
@@ -281,12 +281,16 @@ char *picturetype_to_format_specifier(PictureType *type) {
 
     if (type->type == TYPE_DECIMAL_NUMERIC)
         sprintf(spec, "%%0%u.%ulf", type->places + type->decimal_places + 1, type->decimal_places);
-    else if (type->places == RESERVED_INDEX_PLACES) // Reserved for INDEX vars
-        strcpy(spec, "%u");
     else if (type->type == TYPE_SIGNED_NUMERIC)
         sprintf(spec, "%%.%ud", type->places);
     else if (type->type == TYPE_UNSIGNED_NUMERIC)
         sprintf(spec, "%%.%uu", type->places);
+    else if (type->type == TYPE_DECIMAL_SUPRESSED_NUMERIC)
+        strcpy(spec, "%g");
+    else if (type->type == TYPE_SIGNED_SUPRESSED_NUMERIC)
+        strcpy(spec, "%d");
+    else if (type->type == TYPE_UNSIGNED_SUPRESSED_NUMERIC)
+        strcpy(spec, "%u");
     else if (type->count == 0)
         strcpy(spec, "%c");
     else

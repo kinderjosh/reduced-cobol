@@ -6,8 +6,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define RESERVED_INDEX_PLACES 99
-
 typedef struct {
     enum {
         TYPE_ANY,
@@ -15,7 +13,10 @@ typedef struct {
         TYPE_ALPHANUMERIC,
         TYPE_SIGNED_NUMERIC,
         TYPE_UNSIGNED_NUMERIC,
-        TYPE_DECIMAL_NUMERIC
+        TYPE_DECIMAL_NUMERIC,
+        TYPE_SIGNED_SUPRESSED_NUMERIC,
+        TYPE_UNSIGNED_SUPRESSED_NUMERIC,
+        TYPE_DECIMAL_SUPRESSED_NUMERIC
     } type;
 
     unsigned int places;
