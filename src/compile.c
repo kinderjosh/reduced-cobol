@@ -61,7 +61,7 @@ int compile(char *infile, char *outfile, unsigned int flags, char *libs, char *s
 
     int status = system(cmd);
 
-    if (remove(outc) != 0) {
+    if (!(flags & COMP_DEBUG) && remove(outc) != 0) {
         log_error(infile, 0, 0);
         fprintf(stderr, "failed to remove '%s'\n", outc);
         free(outc);

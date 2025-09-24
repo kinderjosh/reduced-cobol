@@ -35,6 +35,7 @@ $ make
 
 | Option | Description |
 | --- | --- |
+| -g | Build with debugging information. |
 | -include ```<header>``` | Include a C header. |
 | -l ```<library>``` | Link with a C library. |
 | -no-main | Don't add a main function. |
