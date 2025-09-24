@@ -879,7 +879,7 @@ char *emit_string_builder(AST *ast) {
     
     char *var = value_to_string(ast->string_builder.into_var);
     PictureType vartype = get_value_type(ast->string_builder.into_var);
-    char *into = malloc(strlen(var) + 32);
+    char *into = malloc(strlen(var) + 64);
 
     sprintf(into, "strncpy(%s, string_builder, %u);\n", var, vartype.count + 1);
     free(var);
