@@ -372,18 +372,22 @@ AST *parse_arithmetic(Parser *prs) {
     if (strcmp(name, "ADD") == 0 && !expect_identifier(prs, "TO")) {
         delete_ast(value);
         eat_until(prs, TOK_DOT);
+        free(name);
         return NOP(ln, col);
     } else if (strcmp(name, "SUBTRACT") == 0 && !expect_identifier(prs, "FROM")) {
         delete_ast(value);
         eat_until(prs, TOK_DOT);
+        free(name);
         return NOP(ln, col);
     } else if (strcmp(name, "MULTIPLY") == 0 && !expect_identifier(prs, "BY")) {
         delete_ast(value);
         eat_until(prs, TOK_DOT);
+        free(name);
         return NOP(ln, col);
-    } else if (strcmp(name, "DIVIDE") == 0 && !expect_identifier(prs, "INTO")) {
+    } else if (strcmp(name, "DIVIDE") == 0 && !expect_identifier(prs, "BY")) {
         delete_ast(value);
         eat_until(prs, TOK_DOT);
+        free(name);
         return NOP(ln, col);
     }
 
@@ -399,7 +403,7 @@ AST *parse_arithmetic(Parser *prs) {
         }
 
         // If we did get one of these, it'll show an error below anyway.
-        if (right->type != AST_VAR) {
+        if (right->type != AST_VAR && right->type != AST_SUBSCRIPT) {
             log_error(right->file, right->ln, right->col);
             fprintf(stderr, "implicit giving clause but right value isn't a storage value\n");
             show_error(right->file, right->ln, right->col);
@@ -408,7 +412,7 @@ AST *parse_arithmetic(Parser *prs) {
         eat(prs, TOK_ID);
         give = parse_value(prs, TYPE_ANY);
 
-        if (give->type != AST_VAR) {
+        if (give->type != AST_VAR && give->type != AST_SUBSCRIPT) {
             log_error(give->file, give->ln, give->col);
             fprintf(stderr, "giving value isn't a storage value\n");
             show_error(give->file, give->ln, give->col);
@@ -420,7 +424,7 @@ AST *parse_arithmetic(Parser *prs) {
         eat(prs, TOK_ID);
         AST *remainder_dst = parse_value(prs, TYPE_ANY);
 
-        if (remainder_dst->type != AST_VAR) {
+        if (remainder_dst->type != AST_VAR && remainder_dst->type != AST_SUBSCRIPT) {
             log_error(remainder_dst->file, remainder_dst->ln, remainder_dst->col);
             fprintf(stderr, "remainder value isn't a storage value\n");
             show_error(remainder_dst->file, remainder_dst->ln, remainder_dst->col);
@@ -435,13 +439,15 @@ AST *parse_arithmetic(Parser *prs) {
             remainder->arithmetic.cloned_left = remainder->arithmetic.cloned_right = true;
             remainder->arithmetic.implicit_giving = false;
 
-            if (strcmp(name, "DIVIDE") == 0 && give != NULL && strcmp(right->var.name, remainder_dst->var.name) == 0) {
-                // Doing a modulus into its own variable, don't want to
-                // overrwrite with a division here.
-                remainder->arithmetic.cloned_left = remainder->arithmetic.cloned_right = false;
-                delete_ast(give); // GIVING for the division, not the remainder, don't need it.
-                free(name);
-                return remainder;
+            if (strcmp(name, "DIVIDE") == 0 && give != NULL) {
+                //if (right->type == AST_VAR && strcmp(right->var.name, remainder_dst->var.name) == 0) {
+                    // Doing a modulus into its own variable, don't want to
+                    // overrwrite with a division here.
+                    remainder->arithmetic.cloned_left = remainder->arithmetic.cloned_right = false;
+                    delete_ast(give); // GIVING for the division, not the remainder, don't need it.
+                    free(name);
+                    return remainder;
+                //}
             }
 
             astlist_push(root_ptr, remainder);

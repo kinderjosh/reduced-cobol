@@ -18,10 +18,10 @@
 
       * MULTIPLY and DIVIDE must explicity state GIVING.
            MULTIPLY C BY 8 GIVING C.
-           DIVIDE 3 INTO C GIVING C.
+           DIVIDE C BY 3 GIVING C.
 
       * Modulus with remainder.
-           DIVIDE 5 INTO C GIVING C REMAINDER C.
+           DIVIDE C BY 5 GIVING C REMAINDER C.
 
       * Process complex arithmetic expressions with COMPUTE.
            COMPUTE RESULT = (A + 2 - B * C) / 3.

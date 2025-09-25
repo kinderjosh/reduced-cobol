@@ -427,9 +427,9 @@ char *emit_arithmetic(AST *ast) {
     else if (strcmp(ast->arithmetic.name, "MULTIPLY") == 0)
         sprintf(code, "%s = %s * %s;\n", dst, left, right);
     else if (strcmp(ast->arithmetic.name, "DIVIDE") == 0)
-        sprintf(code, "%s = %s / %s;\n", dst, right, left);
+        sprintf(code, "%s = %s / %s;\n", dst, left, right);
     else
-        sprintf(code, "%s = (long long)%s %% %s;\n", dst, right, left);
+        sprintf(code, "%s = (long long)%s %% %s;\n", dst, left, right);
 
     free(left);
     free(right);
