@@ -2,8 +2,8 @@
        PROGRAM-ID. IFELSE-EXAMPLE.
        DATA DIVISION.
        WORKING-STORAGE SECTION.
-       01 A PIC 9(02) VALUE 5.
-       01 B PIC 9(02) VALUE 10.
+       01 A PIC 9(05) VALUE 5.
+       01 B PIC 9(05) VALUE 10.
        PROCEDURE DIVISION.
       * Note that . are not used inside of nested blocks like if statements.
 

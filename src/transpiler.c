@@ -26,13 +26,25 @@ static char *function_predefs;
 static size_t function_predefs_len;
 static size_t function_predefs_cap;
 
-char *picturetype_to_c(unsigned int type) {
-    if (type == TYPE_DECIMAL_NUMERIC || type == TYPE_DECIMAL_SUPRESSED_NUMERIC)
+char *picturetype_to_c(PictureType *type) {
+    if (type->type == TYPE_DECIMAL_NUMERIC || type->type == TYPE_DECIMAL_SUPRESSED_NUMERIC)
         return "double";
-    else if (type == TYPE_SIGNED_NUMERIC || type == TYPE_SIGNED_SUPRESSED_NUMERIC)
-        return "int";
-    else if (type == TYPE_UNSIGNED_NUMERIC || type == TYPE_UNSIGNED_SUPRESSED_NUMERIC)
-        return "unsigned int";
+
+    if (type->type == TYPE_SIGNED_NUMERIC || type->type == TYPE_SIGNED_SUPRESSED_NUMERIC) {
+        if (type->places <= 4)
+            return "int16_t";
+        else if (type->places <= 9)
+            return "int32_t";
+        else if (type->places <= 18)
+            return "int64_t";
+    } else if (type->type == TYPE_UNSIGNED_NUMERIC || type->type == TYPE_UNSIGNED_SUPRESSED_NUMERIC) {
+        if (type->places <= 4)
+            return "uint16_t";
+        else if (type->places <= 9)
+            return "uint32_t";
+        else if (type->places <= 18)
+            return "uint64_t";
+    }
 
     return "char";
 }
@@ -322,7 +334,7 @@ char *emit_display(AST *ast) {
 }
 
 char *emit_pic(AST *ast) {
-    const char *type = picturetype_to_c(ast->pic.type.type);
+    const char *type = picturetype_to_c(&ast->pic.type);
     char *name = picturename_to_c(ast->pic.name);
     char *code;
 

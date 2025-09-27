@@ -23,6 +23,6 @@
 
       * Displaying strings with variables.
       * Note that a newline is only printed when the statement is ended.
-           DIVIDE 2 INTO MY-NUMBER GIVING HALF.
+           DIVIDE MY-NUMBER BY 2 GIVING HALF.
            DISPLAY "Half of " MY-NUMBER " is " HALF.
            STOP RUN.

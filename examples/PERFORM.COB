@@ -4,7 +4,7 @@
        WORKING-STORAGE SECTION.
        01 WS-CHAR PIC A VALUE 'A'.
        01 WS-COUNT PIC 9 VALUE 3.
-       01 WS-I PIC 9(04).
+       01 WS-I PIC 9(05).
        PROCEDURE DIVISION.
            DISPLAY "Count:".
 

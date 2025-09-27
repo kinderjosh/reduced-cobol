@@ -3,7 +3,7 @@
        DATA DIVISION.
        WORKING-STORAGE SECTION.
       * A numerical variable.
-       01 WS-NUM PIC S9(04)V9(02) VALUE 55.
+       01 WS-NUM PIC S9(05)V9(02) VALUE 55.
       * A string to store the conversion into.
        01 WS-STRING PIC X(07).
        PROCEDURE DIVISION.

@@ -5,9 +5,9 @@
       * String to check.
        01 WS-STRING PIC A(32) VALUE "John Smith".
       * Occurrence count.
-       01 WS-COUNT PIC 9(02).
+       01 WS-COUNT PIC 9(05).
       * Total string length.
-       01 WS-TOTAL PIC 9(02).
+       01 WS-TOTAL PIC 9(05).
        PROCEDURE DIVISION.
       * Check "John Smith" and count all 'J' that come before 'S',
       * and count the total number of characters.

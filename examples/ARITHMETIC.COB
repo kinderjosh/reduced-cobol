@@ -3,11 +3,11 @@
        DATA DIVISION.
        WORKING-STORAGE SECTION.
       * Some signed integers.
-       01 A PIC S9(02) VALUE 10.
-       01 B PIC S9(02) VALUE 4.
-       01 C PIC S9(02) VALUE ZERO.
+       01 A PIC S9(05) VALUE 10.
+       01 B PIC S9(05) VALUE 4.
+       01 C PIC S9(05) VALUE ZERO.
       * A floating point.
-       01 RESULT PIC S9(02)V9(02).
+       01 RESULT PIC S9(05)V9(02).
        PROCEDURE DIVISION.
       * Process simple arithmetic using intrinsics.
            ADD 5 TO A.
