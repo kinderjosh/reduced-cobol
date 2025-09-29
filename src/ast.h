@@ -22,6 +22,7 @@ typedef struct {
     unsigned int places;
     unsigned int decimal_places; // Only for floats.
     unsigned int count;
+    unsigned int comp_type;
 } PictureType;
 
 typedef struct {

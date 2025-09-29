@@ -16,9 +16,12 @@
 
 #define NOP(ln, col) create_ast(AST_NOP, ln, col)
 
-// I kinda feel guilty for these but like it's the best way...
 #define IS_MATH(prs) (prs->tok->type == TOK_PLUS || prs->tok->type == TOK_MINUS || prs->tok->type == TOK_STAR || prs->tok->type == TOK_SLASH || strcmp(prs->tok->value, "MOD") == 0)
+
 #define IS_CONDITION(prs) (prs->tok->type == TOK_EQ || prs->tok->type == TOK_EQUAL || prs->tok->type == TOK_NEQ || prs->tok->type == TOK_LT || prs->tok->type == TOK_LTE || prs->tok->type == TOK_GT || prs->tok->type == TOK_GTE || strcmp(prs->tok->value, "IS") == 0 || strcmp(prs->tok->value, "AND") == 0 || strcmp(prs->tok->value, "OR") == 0 || (strcmp(prs->tok->value, "NOT") == 0 && strcmp(peek(prs, 1)->value, "EQUAL") == 0))
+
+// TODO: Implement COMP-3 and COMP-6.
+#define IS_COMP(prs) (strcmp(prs->tok->value, "COMP") == 0 || strcmp(prs->tok->value, "COMP-1") == 0 || strcmp(prs->tok->value, "COMP-2") == 0 || strcmp(prs->tok->value, "COMP-4") == 0 || strcmp(prs->tok->value, "COMP-5") == 0)
 
 #define TABLE_SIZE 10000
 
@@ -2052,6 +2055,43 @@ unsigned int v99_to_num(Parser *prs) {
 }
     */
 
+unsigned int parse_comptype(Parser *prs, AST *ast) {
+    // ast is the existing PIC clause from parse_pic().
+    // This is not used when called from parse_comp_pic().
+
+    // COMP-1, COMP-2, COMP-3 and COMP-6 are not allowed in PIC clauses.
+
+    if (strcmp(prs->tok->value, "COMP") == 0 || strcmp(prs->tok->value, "COMP-4") == 0 || strcmp(prs->tok->value, "BINARY") == 0) {
+        if (ast != NULL && ast->pic.type.decimal_places > 0) {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "COMPUTATION type '%s' used for non-integer variable '%s'\n", prs->tok->value, ast->pic.name);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+        }
+
+        return 4;
+    } else if (strcmp(prs->tok->value, "COMP-1") == 0) {
+        if (ast != NULL) {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "COMPUTATION type '%s' used in a PIC clause for variable '%s'\n", prs->tok->value, ast->pic.name);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+        }
+
+        return 1;
+    } else if (strcmp(prs->tok->value, "COMP-2") == 0) {
+        if (ast != NULL) {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "COMPUTATION type '%s' used in a PIC clause for variable '%s'\n", prs->tok->value, ast->pic.name);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+        }
+
+        return 2;
+    } else if (strcmp(prs->tok->value, "COMP-5") == 0)
+        return 5;
+
+    assert(false);
+    return 0;
+}
+
 AST *parse_pic(Parser *prs) {
     AST *level = parse_constant(prs);
 
@@ -2062,125 +2102,153 @@ AST *parse_pic(Parser *prs) {
     }
 
     char *name = mystrdup(prs->tok->value);
-    AST *ast = create_ast(AST_PIC, prs->tok->ln, prs->tok->col);
-
     eat(prs, TOK_ID);
-    eat(prs, TOK_ID); // PIC
 
-    // A = alphabetical, X = alphanumeric, 9 = numeric
-    PictureType type = (PictureType){ .type = TYPE_ANY, .count = 0, .places = 1, .decimal_places = 0 };
-    bool implicit_count = false;
-
-    if (strcmp(prs->tok->value, "A") == 0) {
-        type.type = TYPE_ALPHABETIC;
-        eat(prs, prs->tok->type);
-    } else if (strcmp(prs->tok->value, "X") == 0) {
-        type.type = TYPE_ALPHANUMERIC;
-        eat(prs, prs->tok->type);
-    } else if (strcmp(prs->tok->value, "9") == 0) {
-        type.type = TYPE_UNSIGNED_NUMERIC;
-        eat(prs, prs->tok->type);
-    } else if (strcmp(prs->tok->value, "SZ") == 0 || strcmp(prs->tok->value, "SZ9") == 0) {
-        type.type = TYPE_SIGNED_SUPRESSED_NUMERIC;
-        eat(prs, prs->tok->type);
-    } else if (strcmp(prs->tok->value, "9V9") == 0) {
-        type.type = TYPE_UNSIGNED_NUMERIC;
-        eat(prs, prs->tok->type);
-        implicit_count = true;
-    } else if (strcmp(prs->tok->value, "ZV9") == 0) {
-        type.type = TYPE_DECIMAL_SUPRESSED_NUMERIC;
-        eat(prs, prs->tok->type);
-        implicit_count = true;
-    } else if (strcmp(prs->tok->value, "S9") == 0) {
-        type.type = TYPE_SIGNED_NUMERIC;
-        eat(prs, prs->tok->type);
-    } else if (strcmp(prs->tok->value, "Z9") == 0) {
-        type.type = TYPE_UNSIGNED_SUPRESSED_NUMERIC;
-        eat(prs, prs->tok->type);
-    } else if (strcmp(prs->tok->value, "S9V9") == 0) {
-        type.type = TYPE_SIGNED_NUMERIC;
-        eat(prs, prs->tok->type);
-        implicit_count = true;
-    } else if (strcmp(prs->tok->value, "SZ9V9") == 0) {
-        type.type = TYPE_DECIMAL_SUPRESSED_NUMERIC;
-        eat(prs, prs->tok->type);
-    } else {
-        log_error(prs->file, prs->tok->ln, prs->tok->col);
-        fprintf(stderr, "invalid picture type '%s'\n", prs->tok->value);
-        show_error(prs->file, prs->tok->ln, prs->tok->col);
-        type.type = TYPE_ALPHANUMERIC;
-    }
-
+    AST *ast = create_ast(AST_PIC, prs->tok->ln, prs->tok->col);
     ast->pic.level = level->constant.i32;
     delete_ast(level);
     ast->pic.name = name;
-    ast->pic.type = type;
     ast->pic.is_index = ast->pic.is_fd = false;
     ast->pic.count = 0;
 
-    if (prs->tok->type == TOK_LPAREN && !implicit_count) {
-        eat(prs, TOK_LPAREN);
+    bool had_pic = false;
 
-        if (prs->tok->type != TOK_INT) {
-            log_error(prs->file, prs->tok->ln, prs->tok->col);
-            fprintf(stderr, "non constant integer picture length '%s'\n", tokentype_to_string(prs->tok->type));
-            show_error(prs->file, prs->tok->ln, prs->tok->col);
+    // We may be defining a record or a following USAGE IS statement.
+    if (strcmp(prs->tok->value, "PIC") == 0) {
+        had_pic = true;
+        eat(prs, TOK_ID); // PIC
 
-            eat_until(prs, TOK_DOT);
+        // A = alphabetical, X = alphanumeric, 9 = numeric
+        PictureType type = (PictureType){ .type = TYPE_ANY, .count = 0, .places = 1, .decimal_places = 0 };
+        bool implicit_count = false;
+
+        if (strcmp(prs->tok->value, "A") == 0) {
+            type.type = TYPE_ALPHABETIC;
+            eat(prs, prs->tok->type);
+        } else if (strcmp(prs->tok->value, "X") == 0) {
+            type.type = TYPE_ALPHANUMERIC;
+            eat(prs, prs->tok->type);
+        } else if (strcmp(prs->tok->value, "9") == 0) {
+            type.type = TYPE_UNSIGNED_NUMERIC;
+            eat(prs, prs->tok->type);
+        } else if (strcmp(prs->tok->value, "SZ") == 0 || strcmp(prs->tok->value, "SZ9") == 0) {
+            type.type = TYPE_SIGNED_SUPRESSED_NUMERIC;
+            eat(prs, prs->tok->type);
+        } else if (strcmp(prs->tok->value, "9V9") == 0) {
+            type.type = TYPE_UNSIGNED_NUMERIC;
+            eat(prs, prs->tok->type);
+            implicit_count = true;
+        } else if (strcmp(prs->tok->value, "ZV9") == 0) {
+            type.type = TYPE_DECIMAL_SUPRESSED_NUMERIC;
+            eat(prs, prs->tok->type);
+            implicit_count = true;
+        } else if (strcmp(prs->tok->value, "S9") == 0) {
+            type.type = TYPE_SIGNED_NUMERIC;
+            eat(prs, prs->tok->type);
+        } else if (strcmp(prs->tok->value, "Z9") == 0) {
+            type.type = TYPE_UNSIGNED_SUPRESSED_NUMERIC;
+            eat(prs, prs->tok->type);
+        } else if (strcmp(prs->tok->value, "S9V9") == 0) {
+            type.type = TYPE_SIGNED_NUMERIC;
+            eat(prs, prs->tok->type);
+            implicit_count = true;
+        } else if (strcmp(prs->tok->value, "SZ9V9") == 0) {
+            type.type = TYPE_DECIMAL_SUPRESSED_NUMERIC;
+            eat(prs, prs->tok->type);
         } else {
-            AST *size = parse_constant(prs);
-
-            if (size->constant.i32 < 1) {
-                log_error(size->file, size->ln, size->col);
-                fprintf(stderr, "found place count '%d' but minimum place count is 1\n", size->constant.i32);
-                show_error(size->file, size->ln, size->col);
-            } else
-                ast->pic.type.places = (unsigned int)size->constant.i32;
-
-            delete_ast(size);
-
-            // Strings are kinda like tables so the place count is the character count yk.
-            if (type.type == TYPE_ALPHABETIC || type.type == TYPE_ALPHANUMERIC)
-                ast->pic.type.count = ast->pic.type.places;
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "invalid picture type '%s'\n", prs->tok->value);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+            type.type = TYPE_ALPHANUMERIC;
         }
 
-        eat(prs, TOK_RPAREN);
-    }
- 
-    if (strcmp(prs->tok->value, "V9") == 0 || implicit_count) {
-        if (type.type != TYPE_SIGNED_NUMERIC && type.type != TYPE_SIGNED_SUPRESSED_NUMERIC) {
-            log_error(prs->file, ast->ln, ast->col);
-            fprintf(stderr, "declaring variable '%s' with decimal points but it is unsigned\n", name);
-            show_error(prs->file, ast->ln, ast->col);
-        }
+        ast->pic.type = type;
 
-        ast->pic.type.type = type.type == TYPE_SIGNED_SUPRESSED_NUMERIC || type.type == TYPE_UNSIGNED_SUPRESSED_NUMERIC ?
-            TYPE_DECIMAL_SUPRESSED_NUMERIC : TYPE_DECIMAL_NUMERIC;
-
-        if (!implicit_count)
-            eat(prs, TOK_ID);
-
-        if (prs->tok->type == TOK_LPAREN) {
+        if (prs->tok->type == TOK_LPAREN && !implicit_count) {
             eat(prs, TOK_LPAREN);
 
-            AST *size = parse_constant(prs);
-            ast->pic.type.decimal_places = (unsigned int)size->constant.i32;
-            delete_ast(size);
+            if (prs->tok->type != TOK_INT) {
+                log_error(prs->file, prs->tok->ln, prs->tok->col);
+                fprintf(stderr, "non constant integer picture length '%s'\n", tokentype_to_string(prs->tok->type));
+                show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+                eat_until(prs, TOK_DOT);
+            } else {
+                AST *size = parse_constant(prs);
+
+                if (size->constant.i32 < 1) {
+                    log_error(size->file, size->ln, size->col);
+                    fprintf(stderr, "found place count '%d' but minimum place count is 1\n", size->constant.i32);
+                    show_error(size->file, size->ln, size->col);
+                } else
+                    ast->pic.type.places = (unsigned int)size->constant.i32;
+
+                delete_ast(size);
+
+                // Strings are kinda like tables so the place count is the character count yk.
+                if (type.type == TYPE_ALPHABETIC || type.type == TYPE_ALPHANUMERIC)
+                    ast->pic.type.count = ast->pic.type.places;
+            }
 
             eat(prs, TOK_RPAREN);
-
-            if (ast->pic.type.decimal_places < 1) {
-                log_error(prs->file, prs->tok->ln, prs->tok->col);
-                fprintf(stderr, "found place count '%d' but minimum place count is 1\n", ast->pic.type.decimal_places);
-                show_error(prs->file, prs->tok->ln, prs->tok->col);
+        }
+    
+        if (strcmp(prs->tok->value, "V9") == 0 || implicit_count) {
+            if (type.type != TYPE_SIGNED_NUMERIC && type.type != TYPE_SIGNED_SUPRESSED_NUMERIC) {
+                log_error(prs->file, ast->ln, ast->col);
+                fprintf(stderr, "declaring variable '%s' with decimal points but it is unsigned\n", name);
+                show_error(prs->file, ast->ln, ast->col);
             }
-        } else
-            ast->pic.type.decimal_places = 1;
+
+            ast->pic.type.type = type.type == TYPE_SIGNED_SUPRESSED_NUMERIC || type.type == TYPE_UNSIGNED_SUPRESSED_NUMERIC ?
+                TYPE_DECIMAL_SUPRESSED_NUMERIC : TYPE_DECIMAL_NUMERIC;
+
+            if (!implicit_count)
+                eat(prs, TOK_ID);
+
+            if (prs->tok->type == TOK_LPAREN) {
+                eat(prs, TOK_LPAREN);
+
+                AST *size = parse_constant(prs);
+                ast->pic.type.decimal_places = (unsigned int)size->constant.i32;
+                delete_ast(size);
+
+                eat(prs, TOK_RPAREN);
+
+                if (ast->pic.type.decimal_places < 1) {
+                    log_error(prs->file, prs->tok->ln, prs->tok->col);
+                    fprintf(stderr, "found place count '%d' but minimum place count is 1\n", ast->pic.type.decimal_places);
+                    show_error(prs->file, prs->tok->ln, prs->tok->col);
+                }
+            } else
+                ast->pic.type.decimal_places = 1;
+        }
+    }
+
+    if (strcmp(prs->tok->value, "USAGE") == 0 && strcmp(peek(prs, 1)->value, "IS") == 0) {
+        eat(prs, TOK_ID);
+        eat(prs, TOK_ID);
+
+        if (IS_COMP(prs))
+            ast->pic.type.comp_type = parse_comptype(prs, ast);
+        else {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "invalid USAGE type '%s' for variable '%s'\n", prs->tok->value, ast->pic.name);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+            ast->pic.type.comp_type = 0;
+        }
+
+        eat(prs, TOK_ID);
+    } else if (!had_pic) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "expected PIC or USAGE clause for variable '%s' but found '%s'\n", ast->pic.name, prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+        ast->pic.type = (PictureType){ .type = TYPE_SIGNED_NUMERIC, .count = 0 };
     }
 
     if (strcmp(prs->tok->value, "VALUE") == 0) {
         eat(prs, TOK_ID);
-        AST *value = parse_value(prs, type.type);
+        AST *value = parse_value(prs, ast->pic.type.type);
         ast->pic.value = value;
 
         if (value->type == AST_STRING && (ast->pic.type.type == TYPE_ALPHABETIC || ast->pic.type.type == TYPE_ALPHANUMERIC) &&
@@ -2260,6 +2328,54 @@ AST *parse_pic(Parser *prs) {
 // Bunch of stuff that could possibly be parsed, don't want to
 // repeat code or make new functions, a goto here is useful.
 done: ;
+    Variable *newthingy = add_variable(ast->file, ast->pic.name, ast->pic.type, ast->pic.count);
+    newthingy->is_index = newthingy->is_fd = newthingy->is_label = false;
+    return ast;
+}
+
+AST *parse_comp_pic(Parser *prs) {
+    // For declaring data with only a USAGE IS, missing the PIC.
+
+    AST *level = parse_constant(prs);
+
+    if (level->constant.i32 < 1 || level->constant.i32 > 49) {
+        log_error(level->file, level->ln, level->col);
+        fprintf(stderr, "invalid level '%d'; level not within 1-49\n", level->constant.i32);
+        show_error(level->file, level->ln, level->col);
+    }
+
+    char *name = mystrdup(prs->tok->value);
+    eat(prs, TOK_ID);
+
+    AST *ast = create_ast(AST_PIC, prs->tok->ln, prs->tok->col);
+    ast->pic.level = level->constant.i32;
+    delete_ast(level);
+    ast->pic.name = name;
+    ast->pic.is_index = ast->pic.is_fd = false;
+    ast->pic.count = 0;
+
+    eat(prs, TOK_ID); // USAGE
+    eat(prs, TOK_ID); // IS
+
+    ast->pic.type.count = ast->pic.count = 0;
+    ast->pic.type.comp_type = parse_comptype(prs, NULL);
+
+    // Floats and doubles don't require PIC, but everything else does.
+    if (ast->pic.type.comp_type != 1 && ast->pic.type.comp_type != 2) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "missing PIC clause for COMPUTATION type '%s' for variable '%s'\n", prs->tok->value, ast->pic.name);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+        ast->pic.type.type = TYPE_SIGNED_NUMERIC;
+    }
+
+    eat(prs, TOK_ID);
+
+    if (strcmp(prs->tok->value, "VALUE") == 0) {
+        eat(prs, TOK_ID);
+        ast->pic.value = parse_value(prs, TYPE_ANY);
+    } else
+        ast->pic.value = NULL;
+
     Variable *newthingy = add_variable(ast->file, ast->pic.name, ast->pic.type, ast->pic.count);
     newthingy->is_index = newthingy->is_fd = newthingy->is_label = false;
     return ast;
@@ -2346,8 +2462,12 @@ void parse_working_storage_section(Parser *prs) {
                 // Level statement with no PIC.
                 eat(prs, TOK_INT);
                 eat(prs, TOK_ID);
-            } else if (next->type == TOK_ID && strcmp(ahead->value, "PIC") == 0)
-                astlist_push(root_ptr, parse_pic(prs));
+            } else if (next->type == TOK_ID) {
+                if (strcmp(ahead->value, "PIC") == 0)
+                    astlist_push(root_ptr, parse_pic(prs));
+                else if (strcmp(ahead->value, "USAGE") == 0)
+                    astlist_push(root_ptr, parse_comp_pic(prs));
+            }
         } else {
             log_error(prs->file, prs->tok->ln, prs->tok->col);
             fprintf(stderr, "invalid clause '%s' in WORKING-STORAGE SECTION\n", prs->tok->value);

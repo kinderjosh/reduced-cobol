@@ -27,23 +27,23 @@ static size_t function_predefs_len;
 static size_t function_predefs_cap;
 
 char *picturetype_to_c(PictureType *type) {
-    if (type->type == TYPE_DECIMAL_NUMERIC || type->type == TYPE_DECIMAL_SUPRESSED_NUMERIC)
-        return "double";
+    if (type->type == TYPE_DECIMAL_NUMERIC || type->type == TYPE_DECIMAL_SUPRESSED_NUMERIC || type->comp_type == 1 || type->comp_type == 2)
+        return type->comp_type == 1 ? "float" : "double";
 
     if (type->type == TYPE_SIGNED_NUMERIC || type->type == TYPE_SIGNED_SUPRESSED_NUMERIC) {
         if (type->places <= 4)
-            return "int16_t";
+            return type->comp_type == 5 ? "short" : "int16_t";
         else if (type->places <= 9)
-            return "int32_t";
-        else if (type->places <= 18)
-            return "int64_t";
+            return type->comp_type == 5 ? "int" : "int32_t";
+        else
+            return type->comp_type == 5 ? "long long" : "int64_t";
     } else if (type->type == TYPE_UNSIGNED_NUMERIC || type->type == TYPE_UNSIGNED_SUPRESSED_NUMERIC) {
         if (type->places <= 4)
-            return "uint16_t";
+            return type->comp_type == 5 ? "unsigned short" : "uint16_t";
         else if (type->places <= 9)
-            return "uint32_t";
-        else if (type->places <= 18)
-            return "uint64_t";
+            return type->comp_type == 5 ? "unsigned int" : "uint32_t";
+        else
+            return type->comp_type == 5 ? "unsigned long long" : "uint64_t";
     }
 
     return "char";
@@ -291,7 +291,18 @@ char *emit_stop_run(AST *ast) {
 char *picturetype_to_format_specifier(PictureType *type) {
     char *spec = malloc(32);
 
-    if (type->type == TYPE_DECIMAL_NUMERIC)
+    if (type->comp_type > 0) {
+        if (type->comp_type == 1)
+            strcpy(spec, "%f");
+        else if (type->comp_type == 2)
+            strcpy(spec, "%lf");
+        else {
+            if (type->places <= 9)
+                strcpy(spec, type->type == TYPE_SIGNED_NUMERIC || type->type == TYPE_SIGNED_SUPRESSED_NUMERIC ? "%d" : "%u");
+            else
+                strcpy(spec, type->type == TYPE_SIGNED_NUMERIC || type->type == TYPE_SIGNED_SUPRESSED_NUMERIC ? "%lld" : "%llu");
+        }
+    } else if (type->type == TYPE_DECIMAL_NUMERIC)
         sprintf(spec, "%%0%u.%ulf", type->places + type->decimal_places + 1, type->decimal_places);
     else if (type->type == TYPE_SIGNED_NUMERIC)
         sprintf(spec, "%%.%ud", type->places);
@@ -300,9 +311,9 @@ char *picturetype_to_format_specifier(PictureType *type) {
     else if (type->type == TYPE_DECIMAL_SUPRESSED_NUMERIC)
         strcpy(spec, "%g");
     else if (type->type == TYPE_SIGNED_SUPRESSED_NUMERIC)
-        strcpy(spec, "%d");
+        strcpy(spec, type->places <= 9 ? "%d" : "%lld");
     else if (type->type == TYPE_UNSIGNED_SUPRESSED_NUMERIC)
-        strcpy(spec, "%u");
+        strcpy(spec, type->places <= 9 ? "%u" : "%llu");
     else if (type->count == 0)
         strcpy(spec, "%c");
     else
