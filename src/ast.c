@@ -193,6 +193,9 @@ void delete_ast(AST *ast) {
             if (ast->accept.from != NULL)
                 delete_ast(ast->accept.from);
             break;
+        case AST_LENGTHOF:
+            delete_ast(ast->lengthof_value);
+            break;
         default: break;
     }
 
@@ -223,9 +226,9 @@ char *asttype_to_string(ASTType type) {
         case AST_NOT: return "not";
         case AST_LABEL: return "label";
         case AST_PERFORM: return "perform";
-        case AST_PERFORM_CONDITION: return "perform until";
-        case AST_PERFORM_COUNT: return "perform times";
-        case AST_PERFORM_VARYING: return "perform varying";
+        case AST_PERFORM_CONDITION:
+        case AST_PERFORM_COUNT:
+        case AST_PERFORM_VARYING:
         case AST_PERFORM_UNTIL: return "perform until";
         case AST_PROC: return "procedure";
         case AST_BLOCK: return "block";
@@ -245,6 +248,7 @@ char *asttype_to_string(ASTType type) {
         case AST_ZERO: return "zero";
         case AST_ARGV: return "argv";
         case AST_EXIT: return "exit";
+        case AST_LENGTHOF: return "length";
     }
 
     assert(false);

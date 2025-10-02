@@ -169,7 +169,8 @@ AST *parse_value(Parser *prs, unsigned int type) {
         case AST_LABEL:
         case AST_NULL:
         case AST_BOOL:
-        case AST_ZERO: break;
+        case AST_ZERO:
+        case AST_LENGTHOF: break;
         case AST_SUBSCRIPT:
             if (value->subscript.value == NULL)
                 break;
@@ -187,11 +188,14 @@ fallthrough:
 }
 
 AST *parse_subscript(Parser *prs, AST *base);
+AST *parse_id(Parser *prs);
 
 // TOFIX: I really don't like how gross and builtin this shit is.
 AST *parse_any_no_error(Parser *prs) {
     if (prs->tok->type == TOK_INT || prs->tok->type == TOK_FLOAT || prs->tok->type == TOK_STRING)
         return parse_stmt(prs);
+    else if (strcmp(prs->tok->value, "LENGTH") == 0)
+        return parse_id(prs);
 
     Variable *var = NULL;
 
@@ -226,7 +230,7 @@ AST *parse_display(Parser *prs, ASTList *root) {
     jump_to(prs, before);
 
     // End of display.
-    if (thing->type != AST_STRING && thing->type != AST_VAR && thing->type != AST_SUBSCRIPT) {
+    if (thing->type != AST_STRING && thing->type != AST_VAR && thing->type != AST_SUBSCRIPT && thing->type != AST_LENGTHOF) {
         delete_ast(thing);
 
         if (!displayed_previously)
@@ -260,7 +264,7 @@ AST *parse_display(Parser *prs, ASTList *root) {
     before = prs->pos;
     AST *next = parse_any_no_error(prs);
 
-    if (next->type != AST_STRING && next->type != AST_VAR && next->type != AST_SUBSCRIPT) {
+    if (next->type != AST_STRING && next->type != AST_VAR && next->type != AST_SUBSCRIPT && next->type != AST_LENGTHOF) {
         // Invalid thing, stop.
         jump_to(prs, before);
         delete_ast(next);
@@ -1885,6 +1889,17 @@ AST *parse_id(Parser *prs) {
         eat(prs, TOK_ID);
         AST *ast = create_ast(AST_INT, ln, col);
         ast->constant.i32 = ' ';
+        return ast;
+    } else if (strcmp(prs->tok->value, "LENGTH") == 0) {
+        eat(prs, TOK_ID);
+
+        if (!expect_identifier(prs, "OF"))
+            return NOP(ln, col);
+
+        eat(prs, TOK_ID);
+
+        AST *ast = create_ast(AST_LENGTHOF, ln, col);
+        ast->lengthof_value = parse_value(prs, TYPE_ANY);
         return ast;
     }
 

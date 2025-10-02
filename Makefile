@@ -32,7 +32,7 @@ endif
 install:
 	make
 ifneq ($(OS),Windows_NT)
-	cp $(EXEC) /usr/local/bin/
+	cp ./$(EXEC) /usr/local/bin/
 endif
 
 uninstall:

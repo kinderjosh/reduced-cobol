@@ -79,7 +79,8 @@ typedef enum {
     AST_ACCEPT,
     AST_ZERO,
     AST_ARGV,
-    AST_EXIT
+    AST_EXIT,
+    AST_LENGTHOF
 } ASTType;
 
 typedef struct AST AST;
@@ -327,6 +328,8 @@ typedef struct AST {
             AST *dst;
             AST *from;
         } accept;
+
+        AST *lengthof_value;
     };
 } AST;
 

@@ -105,6 +105,7 @@ char *value_to_string(AST *ast) {
         case AST_BOOL: return mystrdup(ast->bool_value ? "true" : "false");
         case AST_NULL: return mystrdup("NULL");
         case AST_ZERO: return mystrdup("0");
+        case AST_LENGTHOF: return emit_stmt(ast);
         default: break;
     }
 
@@ -117,8 +118,10 @@ char *value_to_string(AST *ast) {
 PictureType get_value_type(AST *ast) {
     switch (ast->type) {
         case AST_ZERO:
-        case AST_INT: return (PictureType){ .type = TYPE_SIGNED_NUMERIC, .count = 0 };
-        case AST_FLOAT: return (PictureType){ .type = TYPE_DECIMAL_NUMERIC, .count = 0 };
+        case AST_LENGTHOF:
+        // 0 places = trim leading zeros
+        case AST_INT: return (PictureType){ .type = TYPE_SIGNED_NUMERIC, .count = 0, .places = 0 };
+        case AST_FLOAT: return (PictureType){ .type = TYPE_DECIMAL_NUMERIC, .count = 0, .places = 0 };
         case AST_STRING: {
             PictureType type = (PictureType){ .type = TYPE_ALPHANUMERIC, .places = strlen(ast->constant.string) };
             type.count = type.places; // Not sure if doing this in the initializer is UB.
@@ -1221,6 +1224,14 @@ char *emit_accept(AST *ast) {
     return code;
 }
 
+char *emit_lengthof(AST *ast) {
+    char *value = value_to_string(ast->lengthof_value);
+    char *code = malloc(strlen(value) + 11);
+    sprintf(code, "strlen(%s)", value);
+    free(value);
+    return code;
+}
+
 char *emit_stmt(AST *ast) {
     switch (ast->type) {
         case AST_NOP: return calloc(1, sizeof(char));
@@ -1254,6 +1265,7 @@ char *emit_stmt(AST *ast) {
         case AST_INSPECT: return emit_inspect(ast);
         case AST_ACCEPT: return emit_accept(ast);
         case AST_EXIT: return mystrdup("exit(EXIT_SUCCESS);\n");
+        case AST_LENGTHOF: return emit_lengthof(ast);
         default: break;
     }
 
