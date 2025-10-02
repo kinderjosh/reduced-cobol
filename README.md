@@ -17,7 +17,32 @@ Clone the repository and run the makefile:
 ```console
 $ git clone https://github.com/kinderjosh/reduced-cobol.git
 $ cd reduced-cobol
+```
+
+### Unix-like
+
+Simply run the makefile as root with the install flag:
+
+```console
+$ sudo make install
+```
+
+### Windows
+
+1. Build the executable:
+
+```console
 $ make
+```
+
+2. Add the executable path to your environment variables.
+
+### Uninstalling
+
+Only available for Unix-likes:
+
+```console
+$ sudo make uninstall
 ```
 
 ## Usage
