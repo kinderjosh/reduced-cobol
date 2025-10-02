@@ -1881,6 +1881,12 @@ AST *parse_id(Parser *prs) {
         return create_ast(AST_ZERO, ln, col);
     } else if (strcmp(prs->tok->value, "NOT") == 0)
         return parse_not(prs);
+    else if (strcmp(prs->tok->value, "SPACE") == 0) {
+        eat(prs, TOK_ID);
+        AST *ast = create_ast(AST_INT, ln, col);
+        ast->constant.i32 = ' ';
+        return ast;
+    }
 
     Variable *sym;
 
