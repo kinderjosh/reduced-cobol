@@ -1,6 +1,6 @@
       * Basic WIN32 message box in COBOL.
       * Compile this program with 
-      *     cobc build -include windows examples\MESSAGEBOX.COB
+      *     cobc build -include windows examples\MESSAGEBOX.CBL
        IDENTIFICATION DIVISION.
        PROGRAM-ID. MESSAGEBOX.
        PROCEDURE DIVISION.

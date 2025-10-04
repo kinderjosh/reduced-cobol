@@ -3,10 +3,10 @@
        ENVIRONMENT DIVISION.
        INPUT-OUTPUT SECTION.
        FILE-CONTROL.
-      * Assign DATAFILE to the file "HELLOWORLD.COB",
+      * Assign DATAFILE to the file "HELLOWORLD.CBL",
       * reading the file line by line.
            SELECT DATAFILE
-               ASSIGN TO "examples/HELLOWORLD.COB"
+               ASSIGN TO "examples/HELLOWORLD.CBL"
                ORGANIZATION IS LINE SEQUENTIAL
                FILE STATUS IS WS-FILESTATUS.
        DATA DIVISION.
