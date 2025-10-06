@@ -3,7 +3,6 @@ cobc.exe
 a.out
 a.exe
 TEST.CBL
-TEST.CPY
 TEST.c
 .vscode
 examples/write.txt

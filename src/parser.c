@@ -25,6 +25,8 @@
 
 #define TABLE_SIZE 10000
 
+extern char *cur_dir;
+
 static Variable variables[TABLE_SIZE];
 
 // Sometimes we want to return multiple things but we can't,
@@ -45,10 +47,19 @@ uint32_t hash_FNV1a(const char *data, size_t size) {
 }
 
 Variable *find_variable(char *file, char *name) {
+    /*
     char *data = malloc(strlen(file) + strlen(name) + 1);
     strcpy(data, file);
     strcat(data, name);
+    */
 
+    // For now, we won't include the filename in the hashing algorithm,
+    // because it messes with finding symbols from other files, a.k.a copybooks.
+    // However, the codebase already passes the file as a parameter everywhere,
+    // and this may change later, so we'll just supress the warning for now.
+    (void)file;
+
+    char *data = mystrdup(name);
     Variable *var = &variables[hash_FNV1a(data, strlen(data))];
     free(data);
     return var;
@@ -1907,6 +1918,7 @@ AST *parse_id(Parser *prs) {
 
     if ((sym = find_variable(prs->file, prs->tok->value))->used) {
         if (sym->is_label) {
+            printf("%s ??????\n", prs->file);
             AST *ast = create_ast(AST_LABEL, ln, col);
             ast->label = mystrdup(prs->tok->value);
             eat(prs, TOK_ID);
@@ -2431,6 +2443,62 @@ AST *parse_program_id(Parser *prs) {
     return NOP(prs->tok->ln, prs->tok->col);
 }
 
+void parse_working_storage_section(Parser *prs);
+
+void parse_copybook(Parser *prs, size_t ln, size_t col, char *filename, char *path) {
+    // Make sure the path exists before attempting to parse and causing the program to exit
+    // due to a missing file.
+    FILE *f = fopen(path, "r");
+
+    if (f == NULL) {
+        log_error(prs->file, ln, col);
+        fprintf(stderr, "no such copybook '%s' exists\n", filename);
+        show_error(prs->file, ln, col);
+
+        eat_until(prs, TOK_DOT);
+        return;
+    }
+
+    // Cache then restore cur_file.
+    char *file_cache = mystrdup(cur_file);
+    ASTList *root_cache = root_ptr;
+
+    free(cur_file);
+    cur_file = mystrdup(filename);
+
+    // This will add symbols to the symbol table and push ASTs
+    // to the already assigned root_ptr variable in parse_root().
+    Parser cbprs = create_parser(path);
+    parse_working_storage_section(&cbprs);
+    delete_parser(&cbprs);
+
+    free(cur_file);
+    cur_file = file_cache;
+    root_ptr = root_cache;
+}
+
+AST *parse_copy(Parser *prs) {
+    const size_t ln = prs->tok->ln;
+    const size_t col = prs->tok->col;
+    eat(prs, TOK_ID);
+
+    if (!expect_identifier(prs, NULL)) {
+        eat_until(prs, TOK_DOT);
+        return NOP(ln, col);
+    }
+
+    char *file = malloc(strlen(cur_dir) + strlen(prs->tok->value) + 5);
+    sprintf(file, "%s%s.CPY", cur_dir, prs->tok->value);
+
+    const size_t name_ln = prs->tok->ln;
+    const size_t name_col = prs->tok->col;
+    eat(prs, TOK_ID);
+
+    parse_copybook(prs, name_ln, name_col, file, file);
+    free(file);
+    return NOP(ln, col);
+}
+
 bool should_break_from(Parser *prs, char *header) {
     return prs->tok->type == TOK_EOF || strcmp(peek(prs, 1)->value, header) == 0;
 }
@@ -2489,7 +2557,9 @@ void parse_working_storage_section(Parser *prs) {
                 else if (strcmp(ahead->value, "USAGE") == 0)
                     astlist_push(root_ptr, parse_comp_pic(prs));
             }
-        } else {
+        } else if (strcmp(prs->tok->value, "COPY") == 0)
+            astlist_push(root_ptr, parse_copy(prs));
+        else {
             log_error(prs->file, prs->tok->ln, prs->tok->col);
             fprintf(stderr, "invalid clause '%s' in WORKING-STORAGE SECTION\n", prs->tok->value);
             show_error(prs->file, prs->tok->ln, prs->tok->col);

@@ -152,6 +152,7 @@ PictureType get_value_type(AST *ast) {
         default: break;
     }
 
+    printf(">>>%s\n", asttype_to_string(ast->type));
     assert(false);
     return (PictureType){ .type = TYPE_SIGNED_NUMERIC, .count = 0 };
 }
