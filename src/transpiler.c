@@ -247,8 +247,8 @@ char *emit_root(AST *root, bool require_main, char *source_includes) {
         len = 0;
     }
 
-    globals = malloc(1024);
-    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\nstatic size_t previous_string_statement_size;\nstatic char *read_buffer;\nstatic char file_status[3];\nstatic FILE *last_opened_outfile;\nstatic char *inspect_string;\nstatic size_t inspect_count;\nstatic size_t inspect_string_length;\nstatic bool inspect_found;\nstatic bool inspect_locked;\nstatic char *endptr;\nstatic int global_argc;\nstatic char **global_argv;\n__attribute__((noreturn)) static void cobol_error() {\nfprintf(stderr, \"COBOL: CRITICAL RUNTIME ERROR\\n\");\nexit(EXIT_FAILURE);\n}\n");
+    globals = malloc(2048);
+    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\nstatic size_t previous_string_statement_size;\nstatic char *read_buffer;\nstatic char file_status[3];\nstatic FILE *last_opened_outfile;\nstatic char *inspect_string;\nstatic size_t inspect_count;\nstatic size_t inspect_string_length;\nstatic bool inspect_found;\nstatic bool inspect_locked;\nstatic char *endptr;\nstatic int global_argc;\nstatic char **global_argv;\nstatic char spare_string_buffer[4097];\n__attribute__((noreturn)) static void cobol_error() {\nfprintf(stderr, \"COBOL: CRITICAL RUNTIME ERROR\\n\");\nexit(EXIT_FAILURE);\n}\n");
 
     globals_len = strlen(globals);
     globals_cap = 2048;
@@ -321,13 +321,25 @@ char *picturetype_to_format_specifier(PictureType *type) {
             else
                 strcpy(spec, type->type == TYPE_SIGNED_NUMERIC || type->type == TYPE_SIGNED_SUPRESSED_NUMERIC ? "%lld" : "%zu");
         }
-    } else if (type->type == TYPE_DECIMAL_NUMERIC)
-        sprintf(spec, "%%0%u.%ulf", type->places + type->decimal_places + 1, type->decimal_places);
-    else if (type->type == TYPE_SIGNED_NUMERIC)
-        sprintf(spec, "%%.%ud", type->places);
-    else if (type->type == TYPE_UNSIGNED_NUMERIC)
-        sprintf(spec, "%%.%uu", type->places);
-    else if (type->type == TYPE_DECIMAL_SUPRESSED_NUMERIC)
+    } else if (type->type == TYPE_DECIMAL_NUMERIC) {
+        // Constant.
+        if (type->places == 0 && type->decimal_places == 0)
+            strcpy(spec, "%.2lf");
+        else
+            sprintf(spec, "%%0%u.%ulf", type->places + type->decimal_places + 1, type->decimal_places);
+    } else if (type->type == TYPE_SIGNED_NUMERIC) {
+        // Constant.
+        if (type->places == 0)
+            strcpy(spec, "%d");
+        else
+            sprintf(spec, "%%.%ud", type->places);
+    } else if (type->type == TYPE_UNSIGNED_NUMERIC) {
+        // Constant.
+        if (type->places == 0)
+            strcpy(spec, "%u");
+        else
+            sprintf(spec, "%%.%uu", type->places);
+    } else if (type->type == TYPE_DECIMAL_SUPRESSED_NUMERIC)
         strcpy(spec, "%g");
     else if (type->type == TYPE_SIGNED_SUPRESSED_NUMERIC)
         strcpy(spec, type->places <= 9 ? "%d" : "%lld");
@@ -813,7 +825,7 @@ char *emit_call(AST *ast) {
     return code;
 }
 
-void emit_string_stmt_previous_size(StringStatement *stmt, char *value, char **increment, char **size, bool stmt_already_loaded) {
+void emit_string_stmt_previous_size(StringStatement *stmt, char *value, char **increment, char **size, bool stmt_already_loaded, PictureType *type) {
     // stmt_already_loaded means that the string value is already in string_builder,
     // we don't want to check stmt->value for constants.
 
@@ -836,9 +848,19 @@ void emit_string_stmt_previous_size(StringStatement *stmt, char *value, char **i
             else
                 sprintf(*size, "%zu", strlen(stmt->value->constant.string));
         }
-    } else if (stmt->delimit == DELIM_SIZE) {
-        sprintf(*increment, "previous_string_statement_size = strlen(%s);\n", value);
-        sprintf(*size, "strlen(%s)", value);
+    } 
+    
+    // If a non-string is DELIMETED BY SPACE then we want it to be treated as DELIMETED BY SIZE
+    // here because there aren't any spaces in a non-string.
+    else if (stmt->delimit == DELIM_SIZE || (type != NULL && (type->type != TYPE_ALPHABETIC || type->type != TYPE_ALPHANUMERIC || type->count == 0))) {
+        if (type != NULL && (type->type == TYPE_ALPHABETIC || type->type == TYPE_ALPHANUMERIC) && type->count > 0) {
+            sprintf(*increment, "previous_string_statement_size = strlen(%s);\n", value);
+            sprintf(*size, "strlen(%s)", value);
+        } else {
+            // spare_string_buffer will be formatted as a string from the non-string value.
+            strcpy(*increment, "previous_string_statement_size = strlen(spare_string_buffer);\n");
+            strcpy(*size, "strlen(spare_string_buffer)");
+        }
     } else {
         // The +1 at the end of the increment is important because it skips the space character,
         // otherwise the next search would start at the space character, and return 0 size.
@@ -854,17 +876,28 @@ char *emit_string_stmt(StringStatement *stmt) {
     char *value = value_to_string(stmt->value);
     char *increment = NULL;
     char *size = NULL;
-    emit_string_stmt_previous_size(stmt, value, &increment, &size, false);
+    PictureType type = get_value_type(stmt->value);
+    emit_string_stmt_previous_size(stmt, value, &increment, &size, false, &type);
 
     assert(increment != NULL);
     assert(size != NULL);
 
-    char *code = malloc(strlen(value) + strlen(increment) + strlen(size) + 36);
+    char *code = malloc(strlen(value) + strlen(increment) + strlen(size) + 128);
 
     // Avoid stringop-overflow error from using strncat with string literals delimited by size.
     if (stmt->value->type == AST_STRING && stmt->delimit == DELIM_SIZE)
         sprintf(code, "strcat(string_builder, %s);\n"
                       "%s", value, increment);
+
+    // Non-string needs to be formatted first.
+    else if (type.type != TYPE_ALPHABETIC && type.type != TYPE_ALPHANUMERIC && type.count == 0) {
+        char *spec = picturetype_to_format_specifier(&type);
+        sprintf(code, "snprintf(spare_string_buffer, 4095, \"%s\", %s);\n"
+                      "%s"
+                      "strncat(string_builder, spare_string_buffer, previous_string_statement_size);\n", spec, value, increment);
+        free(spec);
+    }
+
     // Some size statements require setting up the endptr variable for searching for a space.
     else if (stmt->delimit == DELIM_SPACE)
         sprintf(code, "%s"
@@ -889,7 +922,7 @@ char *emit_unstring(AST *ast) {
 
     char *increment;
     char *size;
-    emit_string_stmt_previous_size(&ast->string_splitter.base, base, &increment, &size, true);
+    emit_string_stmt_previous_size(&ast->string_splitter.base, base, &increment, &size, true, NULL);
     assert(increment != NULL);
     assert(size != NULL);
 

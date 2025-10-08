@@ -4,6 +4,7 @@
        WORKING-STORAGE SECTION.
        01 WS-NAME PIC A(32) VALUE "John".
        01 WS-LENGTH PIC 9(05).
+       01 WS-AGE PIC 9(02) VALUE 21.
        PROCEDURE DIVISION.
       * Concatenate " Smith" onto WS-NAME to make "John Smith".
 
@@ -12,7 +13,9 @@
            STRING WS-NAME DELIMITED BY SPACE
       * Append Smith onto it, delimited by its size, basically
       * appending the whole string onto it.
-               " Smith" DELIMITED BY SIZE
+               " Smith " DELIMITED BY SIZE
+      * Append a non-string onto it too.
+               WS-AGE DELIMITED BY SIZE
       * Store the result string into WS-NAME.
                INTO WS-NAME
       * Store the length of the result string in WS-LENGTH.

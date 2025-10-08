@@ -32,6 +32,7 @@ typedef struct {
     bool in_main;
     Division cur_div;
     Section cur_sect;
+    bool parse_extra_value;
 } Parser;
 
 AST *parse_file(char *file, char **main_files, bool *out_had_main);

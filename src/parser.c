@@ -110,7 +110,7 @@ Parser create_parser(char *file, char **main_infiles) {
     tokens[token_count++] = tok;
     delete_lexer(&lex);
     return (Parser){ .file = file, .tokens = tokens, .token_count = token_count, .tok = &tokens[0], 
-        .pos = 0, .program_id = {0}, .in_main = false, .cur_div = DIV_NONE, .cur_sect = SECT_NONE };
+        .pos = 0, .program_id = {0}, .in_main = false, .cur_div = DIV_NONE, .cur_sect = SECT_NONE, .parse_extra_value = true };
 }
 
 void delete_parser(Parser *prs) {
@@ -172,6 +172,7 @@ bool expect_identifier(Parser *prs, char *id) {
 }
 
 AST *parse_stmt(Parser *prs);
+AST *parse_math(Parser *prs, AST *first, unsigned int type);
 
 AST *parse_value(Parser *prs, unsigned int type) {
     // TODO: Actually kinda check types bruh?
@@ -203,6 +204,9 @@ fallthrough:
             show_error(value->file, value->ln, value->col);
             break;
     }
+
+    if (prs->parse_extra_value && IS_MATH(prs))
+        return parse_math(prs, value, type);
 
     return value;
 }
@@ -1120,7 +1124,9 @@ AST *parse_subscript(Parser *prs, AST *base) {
     AST *index = parse_value(prs, TYPE_ANY);
 
     switch (index->type) {
-        case AST_NOP: break;
+        case AST_NOP:
+        case AST_MATH:
+        case AST_SUBSCRIPT: break;
         case AST_INT:
             if (index->constant.i32 < 1) {
                 log_error(index->file, index->ln, index->col);
@@ -1934,7 +1940,16 @@ AST *parse_id(Parser *prs) {
         eat(prs, TOK_ID);
 
         AST *ast = create_ast(AST_LENGTHOF, ln, col);
+
+        // Set prs->parse_extra_value to false because we don't want
+        // other values getting inside strlen().
+        // For example, LENGTH OF "lsdlk" - 2
+        // We don't want the -2 to be part of the LENGTH OF.
+
+        bool before = prs->parse_extra_value;
+        prs->parse_extra_value = false;
         ast->lengthof_value = parse_value(prs, TYPE_ANY);
+        prs->parse_extra_value = before;
         return ast;
     }
 
