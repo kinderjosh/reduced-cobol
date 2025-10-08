@@ -34,6 +34,8 @@ typedef struct {
     bool is_label;
     bool is_index;
     bool is_fd;
+    bool is_linkage_src;
+    bool using_in_proc_div;
 } Variable;
 
 typedef enum {
@@ -177,6 +179,7 @@ typedef struct AST {
             unsigned int count;
             bool is_index;
             bool is_fd;
+            bool is_linkage_src;
         } pic;
 
         struct {

@@ -15,7 +15,7 @@ typedef struct {
     size_t col;
 } Lexer;
 
-Lexer create_lexer(char *file);
+Lexer create_lexer(char *file, char **main_infiles);
 void delete_lexer(Lexer *lex);
 Token lex_next_token(Lexer *lex);
 

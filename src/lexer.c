@@ -12,13 +12,17 @@
 #include <inttypes.h>
 #include <errno.h>
 
-Lexer create_lexer(char *file) {
+Lexer create_lexer(char *file, char **main_infiles) {
     FILE *f = fopen(file, "r");
 
     if (f == NULL) {
         log_error(file, 0, 0);
         fprintf(stderr, "no such file exists\n");
-        exit(1);
+
+        if (main_infiles != NULL)
+            free(main_infiles); // Allocated in main(), if NULL then isn't called from compile().
+
+        exit(EXIT_FAILURE);
     }
 
     fseek(f, 0, SEEK_END);

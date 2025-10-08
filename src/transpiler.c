@@ -89,7 +89,14 @@ char *value_to_string(AST *ast) {
             string = malloc(strlen(ast->constant.string) + 3);
             sprintf(string, "\"%s\"", ast->constant.string);
             return string;
-        case AST_VAR: return picturename_to_c(ast->var.name);
+        case AST_VAR: 
+            if (ast->var.sym->is_linkage_src && strlen(ast->var.name) > 3 && ast->var.name[0] == 'L' &&
+                ast->var.name[1] == 'S' && ast->var.name[2] == '-')
+
+                // Remove 'LS-' remove linkage variable name.
+                return picturename_to_c(ast->var.name + 3);
+
+            return picturename_to_c(ast->var.name);
         case AST_PARENS: {
             char *value = value_to_string(ast->parens);
             string = malloc(strlen(value) + 3);
@@ -118,7 +125,6 @@ char *value_to_string(AST *ast) {
 PictureType get_value_type(AST *ast) {
     switch (ast->type) {
         case AST_ZERO:
-        case AST_LENGTHOF:
         // 0 places = trim leading zeros
         case AST_INT: return (PictureType){ .type = TYPE_SIGNED_NUMERIC, .count = 0, .places = 0 };
         case AST_FLOAT: return (PictureType){ .type = TYPE_DECIMAL_NUMERIC, .count = 0, .places = 0 };
@@ -149,6 +155,8 @@ PictureType get_value_type(AST *ast) {
             type.count = 0;
             return type;
         }
+        // Make LENGTHOF COMP-5 to print as %zu
+        case AST_LENGTHOF: return (PictureType){ .type = TYPE_UNSIGNED_SUPRESSED_NUMERIC, .comp_type = 5, .count = 0, .places = 18 };
         default: break;
     }
 
@@ -228,13 +236,20 @@ char *emit_list(ASTList *list) {
 
 char *emit_root(AST *root, bool require_main, char *source_includes) {
     char *code = malloc(1024);
-    strcpy(code, "int main(int argc, char **argv) {\nglobal_argc = argc;\nglobal_argv = argv;\n");
-
-    size_t len = strlen(code);
     size_t cap = 1024;
+    size_t len;
+
+    if (require_main) {
+        strcpy(code, "int main(int argc, char **argv) {\nglobal_argc = argc;\nglobal_argv = argv;\n");
+        len = 75;
+    } else {
+        code[0] = '\0';
+        len = 0;
+    }
 
     globals = malloc(1024);
-    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\nstatic size_t previous_string_statement_size;\nstatic char *read_buffer;\nstatic char file_status[3];\nstatic FILE *last_opened_outfile;\nstatic char *inspect_string;\nstatic size_t inspect_count;\nstatic size_t inspect_string_length;\nstatic bool inspect_found;\nstatic bool inspect_locked;\nstatic char *endptr;\nint global_argc;\nchar **global_argv;\n__attribute__((noreturn)) static void cobol_error() {\nfprintf(stderr, \"COBOL: CRITICAL RUNTIME ERROR\\n\");\nexit(EXIT_FAILURE);\n}\n");
+    strcpy(globals, "static char string_builder[4097];\nstatic size_t string_builder_pointer;\nstatic size_t previous_string_statement_size;\nstatic char *read_buffer;\nstatic char file_status[3];\nstatic FILE *last_opened_outfile;\nstatic char *inspect_string;\nstatic size_t inspect_count;\nstatic size_t inspect_string_length;\nstatic bool inspect_found;\nstatic bool inspect_locked;\nstatic char *endptr;\nstatic int global_argc;\nstatic char **global_argv;\n__attribute__((noreturn)) static void cobol_error() {\nfprintf(stderr, \"COBOL: CRITICAL RUNTIME ERROR\\n\");\nexit(EXIT_FAILURE);\n}\n");
+
     globals_len = strlen(globals);
     globals_cap = 2048;
 
@@ -304,7 +319,7 @@ char *picturetype_to_format_specifier(PictureType *type) {
             if (type->places <= 9)
                 strcpy(spec, type->type == TYPE_SIGNED_NUMERIC || type->type == TYPE_SIGNED_SUPRESSED_NUMERIC ? "%d" : "%u");
             else
-                strcpy(spec, type->type == TYPE_SIGNED_NUMERIC || type->type == TYPE_SIGNED_SUPRESSED_NUMERIC ? "%lld" : "%llu");
+                strcpy(spec, type->type == TYPE_SIGNED_NUMERIC || type->type == TYPE_SIGNED_SUPRESSED_NUMERIC ? "%lld" : "%zu");
         }
     } else if (type->type == TYPE_DECIMAL_NUMERIC)
         sprintf(spec, "%%0%u.%ulf", type->places + type->decimal_places + 1, type->decimal_places);
@@ -350,7 +365,16 @@ char *emit_display(AST *ast) {
 
 char *emit_pic(AST *ast) {
     const char *type = picturetype_to_c(&ast->pic.type);
-    char *name = picturename_to_c(ast->pic.name);
+    char *name;
+
+    if (ast->pic.is_linkage_src && strlen(ast->pic.name) > 3 && ast->pic.name[0] == 'L' &&
+        ast->pic.name[1] == 'S' && ast->pic.name[2] == '-') {
+
+        // Remove 'LS-' remove linkage variable name.
+        name = picturename_to_c(ast->pic.name + 3);
+    } else
+        name = picturename_to_c(ast->pic.name);
+
     char *code;
 
     if ((ast->pic.type.type == TYPE_ALPHABETIC || ast->pic.type.type == TYPE_ALPHANUMERIC) && ast->pic.type.count > 0)
@@ -389,6 +413,14 @@ char *emit_pic(AST *ast) {
     }
 
     free(name);
+
+    if (ast->pic.is_linkage_src) {
+        char *temp = malloc(strlen(code) + 10);
+        sprintf(temp, "extern %s", code);
+        free(code);
+        code = temp;
+    }
+
     append_global(code);
     free(code);
     return calloc(1, sizeof(char));

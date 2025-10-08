@@ -8,7 +8,7 @@
 char *cc_path = "gcc";
 
 void usage(const char *prog) {
-    printf("usage: %s <command> [options] <input file>\n"
+    printf("usage: %s <command> [options] <files...>\n"
            "commands:\n"
            "    build               produce an executable\n"
            "    object              produce an object file\n"
@@ -52,7 +52,8 @@ int main(int argc, char **argv) {
     char *outfile = "a.out";
 #endif
 
-    char *infile = NULL;
+    char **infiles = malloc(sizeof(char *));
+    size_t infile_count = 0;
     char *libs = calloc(1, sizeof(char));
     size_t libs_len = 0;
     char *source_includes = calloc(1, sizeof(char));
@@ -113,27 +114,23 @@ int main(int argc, char **argv) {
 
             outfile = argv[++i];
             flags |= COMP_OUTFILE_SPECIFIED;
-        } else if (i == argc - 1)
-            infile = argv[i];
-        else {
-            log_error(NULL, 0, 0);
-            fprintf(stderr, "unknown option '%s'\n", argv[i]);
-            free(libs);
-            free(source_includes);
-            return EXIT_FAILURE;
+        } else {
+            infiles = realloc(infiles, (infile_count + 1) * sizeof(char *));
+            infiles[infile_count++] = argv[i];
         }
     }
 
-    if (infile == NULL) {
+    if (infile_count == 0) {
         log_error(NULL, 0, 0);
-        fprintf(stderr, "missing input file\n");
+        fprintf(stderr, "missing input files\n");
         free(libs);
         free(source_includes);
         return EXIT_FAILURE;
     }
     
-    int status = compile(infile, outfile, flags, libs, source_includes);
+    int status = compile(infiles, infile_count, outfile, flags, libs, source_includes);
     free(libs);
     free(source_includes);
+    free(infiles);
     return status;
 }

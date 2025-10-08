@@ -48,7 +48,7 @@ $ sudo make uninstall
 ## Usage
 
 ```
-./cobc <command> [options] <input file>
+./cobc <command> [options] <files...>
 ```
 
 | Command | Description |

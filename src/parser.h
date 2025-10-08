@@ -9,12 +9,16 @@
 typedef enum {
     DIV_NONE,
     DIV_IDENTIFICATION,
+    DIV_ENVIRONMENT,
     DIV_DATA,
     DIV_PROCEDURE
 } Division;
 
 typedef enum {
     SECT_NONE,
+    SECT_INPUT_OUTPUT,
+    SECT_FILE,
+    SECT_LINKAGE,
     SECT_WORKING_STORAGE
 } Section;
 
@@ -26,8 +30,10 @@ typedef struct {
     size_t pos;
     char program_id[65];
     bool in_main;
+    Division cur_div;
+    Section cur_sect;
 } Parser;
 
-AST *parse_file(char *file);
+AST *parse_file(char *file, char **main_files, bool *out_had_main);
 
 #endif

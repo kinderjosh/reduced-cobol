@@ -71,17 +71,25 @@ bool variable_exists(char *file, char *name) {
 
 Variable *add_variable(char *file, char *name, PictureType type, unsigned int count) {
     Variable *var = find_variable(file, name);
+
+    if (var->used && var->is_linkage_src) {
+        // This variable was externed in another file,
+        // and is being declared in this file.
+        return var;
+    }
+
     assert(!var->used);
     var->file = file; // Wrong but who cares TOFIX
     var->name = name;
     var->type = type;
     var->count = count;
     var->used = true;
+    var->is_fd = var->is_index = var->is_label = var->is_linkage_src = var->using_in_proc_div = false;
     return var;
 }
 
-Parser create_parser(char *file) {
-    Lexer lex = create_lexer(file);
+Parser create_parser(char *file, char **main_infiles) {
+    Lexer lex = create_lexer(file, main_infiles);
     Token tok;
 
     Token *tokens = malloc(32 * sizeof(Token));
@@ -101,7 +109,8 @@ Parser create_parser(char *file) {
     // Add the EOF.
     tokens[token_count++] = tok;
     delete_lexer(&lex);
-    return (Parser){ .file = file, .tokens = tokens, .token_count = token_count, .tok = &tokens[0], .pos = 0, .program_id = {0}, .in_main = false };
+    return (Parser){ .file = file, .tokens = tokens, .token_count = token_count, .tok = &tokens[0], 
+        .pos = 0, .program_id = {0}, .in_main = false, .cur_div = DIV_NONE, .cur_sect = SECT_NONE };
 }
 
 void delete_parser(Parser *prs) {
@@ -1025,7 +1034,6 @@ AST *parse_procedure(Parser *prs) {
 
     Variable *var = add_variable(prs->file, name, (PictureType){ .type = TYPE_ANY, .count = 0 }, 0);
     var->is_label = true;
-    var->is_index = var->is_fd = false;
 
     AST *ast = create_ast(AST_PROC, ln, col);
     ast->proc.name = name;
@@ -1918,7 +1926,6 @@ AST *parse_id(Parser *prs) {
 
     if ((sym = find_variable(prs->file, prs->tok->value))->used) {
         if (sym->is_label) {
-            printf("%s ??????\n", prs->file);
             AST *ast = create_ast(AST_LABEL, ln, col);
             ast->label = mystrdup(prs->tok->value);
             eat(prs, TOK_ID);
@@ -1929,6 +1936,12 @@ AST *parse_id(Parser *prs) {
         ast->var.name = mystrdup(prs->tok->value);
         ast->var.sym = sym;
         eat(prs, TOK_ID);
+
+        if (sym->is_linkage_src && !sym->using_in_proc_div) {
+            log_error(prs->file, ln, col);
+            fprintf(stderr, "linkage variable '%s' missing USING statement in PROCEDURE DIVISION\n", ast->var.name);
+            show_error(prs->file, ln, col);
+        }
 
         if (prs->tok->type == TOK_LPAREN)
             return parse_subscript(prs, ast);
@@ -2135,13 +2148,12 @@ AST *parse_pic(Parser *prs) {
     }
 
     char *name = mystrdup(prs->tok->value);
-    eat(prs, TOK_ID);
-
     AST *ast = create_ast(AST_PIC, prs->tok->ln, prs->tok->col);
+    eat(prs, TOK_ID);
     ast->pic.level = level->constant.i32;
     delete_ast(level);
     ast->pic.name = name;
-    ast->pic.is_index = ast->pic.is_fd = false;
+    ast->pic.is_index = ast->pic.is_fd = ast->pic.is_linkage_src = false;
     ast->pic.count = 0;
 
     bool had_pic = false;
@@ -2352,7 +2364,6 @@ AST *parse_pic(Parser *prs) {
 
             Variable *var = add_variable(pic->file, pic->pic.name, pic->pic.type, pic->pic.count);
             var->is_index = true;
-            var->is_fd = var->is_label = false;
             eat(prs, TOK_ID);
             astlist_push(root_ptr, pic);
         }
@@ -2361,8 +2372,18 @@ AST *parse_pic(Parser *prs) {
 // Bunch of stuff that could possibly be parsed, don't want to
 // repeat code or make new functions, a goto here is useful.
 done: ;
-    Variable *newthingy = add_variable(ast->file, ast->pic.name, ast->pic.type, ast->pic.count);
-    newthingy->is_index = newthingy->is_fd = newthingy->is_label = false;
+    Variable *v = add_variable(ast->file, ast->pic.name, ast->pic.type, ast->pic.count);
+
+    if (prs->cur_sect == SECT_LINKAGE) {
+        v->is_linkage_src = ast->pic.is_linkage_src = true;
+
+        if (ast->pic.value != NULL) {
+            log_error(prs->file, ast->ln, ast->col);
+            fprintf(stderr, "value assigned to linkage variable '%s'\n", ast->pic.name);
+            show_error(prs->file, ast->ln, ast->col);
+        }
+    }
+
     return ast;
 }
 
@@ -2409,8 +2430,11 @@ AST *parse_comp_pic(Parser *prs) {
     } else
         ast->pic.value = NULL;
 
-    Variable *newthingy = add_variable(ast->file, ast->pic.name, ast->pic.type, ast->pic.count);
-    newthingy->is_index = newthingy->is_fd = newthingy->is_label = false;
+    Variable *v = add_variable(ast->file, ast->pic.name, ast->pic.type, ast->pic.count);
+
+    if (prs->cur_sect == SECT_LINKAGE)
+        v->is_linkage_src = true;
+
     return ast;
 }
 
@@ -2468,7 +2492,7 @@ void parse_copybook(Parser *prs, size_t ln, size_t col, char *filename, char *pa
 
     // This will add symbols to the symbol table and push ASTs
     // to the already assigned root_ptr variable in parse_root().
-    Parser cbprs = create_parser(path);
+    Parser cbprs = create_parser(path, NULL);
     parse_working_storage_section(&cbprs);
     delete_parser(&cbprs);
 
@@ -2528,6 +2552,41 @@ void parse_identification_division(Parser *prs) {
         else {
             log_error(prs->file, prs->tok->ln, prs->tok->col);
             fprintf(stderr, "invalid clause '%s' in IDENTIFICATION DIVISION\n", prs->tok->value);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+            eat_until(prs, TOK_DOT);
+        }
+    }
+}
+
+// This function looks pretty much exactly like parse_working_storage_section().
+void parse_linkage_section(Parser *prs) {
+    while (!should_break_from(prs, "DIVISION")) {
+        while (prs->tok->type == TOK_DOT)
+            eat(prs, TOK_DOT);
+
+        if (should_break_from(prs, "DIVISION") || should_break_from(prs, "SECTION"))
+            break;
+
+        if (prs->tok->type == TOK_INT) {
+            // Check if it's a PICTURE clause.
+            Token *next = peek(prs, 1);
+            Token *ahead = peek(prs, 2);
+        
+            if (ahead->type == TOK_DOT && next->type == TOK_ID) {
+                // Level statement with no PIC.
+                eat(prs, TOK_INT);
+                eat(prs, TOK_ID);
+            } else if (next->type == TOK_ID) {
+                if (strcmp(ahead->value, "PIC") == 0)
+                    astlist_push(root_ptr, parse_pic(prs));
+                else if (strcmp(ahead->value, "USAGE") == 0)
+                    astlist_push(root_ptr, parse_comp_pic(prs));
+            }
+        } else if (strcmp(prs->tok->value, "COPY") == 0)
+            astlist_push(root_ptr, parse_copy(prs));
+        else {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "invalid clause '%s' in LINKAGE SECTION\n", prs->tok->value);
             show_error(prs->file, prs->tok->ln, prs->tok->col);
             eat_until(prs, TOK_DOT);
         }
@@ -2886,7 +2945,47 @@ void parse_data_division(Parser *prs, bool ignore_working_storage) {
 }
 */
 
+// LINKAGE SECTION variables need to be explicitly used in the
+// PROCEDURE DIVISION statement for some reason.
+void parse_using_linkages(Parser *prs) {
+    eat(prs, TOK_ID);
+    size_t count = 0;
+
+    while (prs->tok->type == TOK_COMMA || count == 0) {
+        if (count > 0)
+            eat(prs, TOK_COMMA);
+
+        if (!expect_identifier(prs, NULL)) {
+            eat_until(prs, TOK_DOT);
+            return;
+        }
+
+        Variable *var = find_variable(prs->file, prs->tok->value);
+
+        if (!var->used) {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "undefined variable '%s'\n", prs->tok->value);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+        } else if (!var->is_linkage_src) {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "variable '%s' not defined in LINKAGE SECTION\n", prs->tok->value);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+        } else if (var->using_in_proc_div) {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "variable '%s' already USING in PROCEDURE DIVISION\n", prs->tok->value);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+        } else
+            var->using_in_proc_div = true;
+
+        eat(prs, TOK_ID);
+        count++;
+    }
+}
+
 void parse_procedure_division(Parser *prs) {
+    if (strcmp(prs->tok->value, "USING") == 0)
+        parse_using_linkages(prs);
+
     prs->in_main = true;
 
     while (!should_break_from(prs, "DIVISION")) {
@@ -2990,9 +3089,10 @@ void parser_reset(Parser *prs) {
     prs->tok = &prs->tokens[0];
 }
 
-AST *parse_file(char *file) {
+AST *parse_file(char *file, char **main_infiles, bool *out_had_main) {
+    *out_had_main = false;
     cur_file = mystrdup(file);
-    Parser prs = create_parser(file);
+    Parser prs = create_parser(file, main_infiles);
 
     AST *root = create_ast(AST_ROOT, 1, 1);
     root->root = create_astlist();
@@ -3004,7 +3104,22 @@ AST *parse_file(char *file) {
     if (prs.tok->type != TOK_EOF) {
         eat(&prs, TOK_ID);
         eat(&prs, TOK_ID);
+
+        prs.cur_div = DIV_IDENTIFICATION;
         parse_identification_division(&prs);
+    }
+
+    parser_reset(&prs);
+
+    eat_until_section(&prs, "LINKAGE");
+
+    if (prs.tok->type != TOK_EOF) {
+        eat(&prs, TOK_ID);
+        eat(&prs, TOK_ID);
+
+        prs.cur_div = DIV_DATA;
+        prs.cur_sect = SECT_LINKAGE;
+        parse_linkage_section(&prs);
     }
 
     parser_reset(&prs);
@@ -3017,6 +3132,9 @@ AST *parse_file(char *file) {
     if (prs.tok->type != TOK_EOF) {
         eat(&prs, TOK_ID);
         eat(&prs, TOK_ID);
+
+        prs.cur_div = DIV_DATA;
+        prs.cur_sect = SECT_WORKING_STORAGE;
         parse_working_storage_section(&prs);
     }
 
@@ -3027,6 +3145,9 @@ AST *parse_file(char *file) {
     if (prs.tok->type != TOK_EOF) {
         eat(&prs, TOK_ID);
         eat(&prs, TOK_ID);
+
+        prs.cur_div = DIV_DATA;
+        prs.cur_sect = SECT_FILE;
         parse_file_section(&prs);
     }
 
@@ -3058,20 +3179,21 @@ AST *parse_file(char *file) {
     if (prs.tok->type != TOK_EOF) {
         eat(&prs, TOK_ID);
         eat(&prs, TOK_ID);
+
+        prs.cur_div = DIV_ENVIRONMENT;
         parse_environment_division(&prs);
     }
 
     parser_reset(&prs);
 
-    // Finally parse the actual program.
+    // Finally parse the actual program (PROCEDURE DIVISION is optional).
     eat_until_division(&prs, "PROCEDURE");
 
-    // TODO: Don't enforce PROCEDURE DIVISION?
-    if (prs.tok->type == TOK_EOF) {
-        log_error(file, 0, 0);
-        fprintf(stderr, "missing PROCEDURE DIVISION\n");
-    } else
+    if (prs.tok->type != TOK_EOF) {
+        *out_had_main = true;
+        prs.cur_div = DIV_PROCEDURE;
         parse_division(&prs);
+    }
 
     delete_parser(&prs);
     free(cur_file);

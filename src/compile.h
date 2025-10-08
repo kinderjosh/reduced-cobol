@@ -8,6 +8,8 @@
 #define COMP_NO_MAIN (0x10)
 #define COMP_DEBUG (0x20)
 
-int compile(char *infile, char *outfile, unsigned int flags, char *libs, char *source_includes);
+#include <stdio.h>
+
+int compile(char **infiles, size_t infile_count, char *outfile, unsigned int flags, char *libs, char *source_includes);
 
 #endif
