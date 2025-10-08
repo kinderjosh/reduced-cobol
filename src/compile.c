@@ -197,7 +197,7 @@ int compile_one_file(AST *root, char *basefile, char *infile, char *outfile, uns
     char *cflags = (flags & COMP_DEBUG) ? DEBUG_CFLAGS : RELEASE_CFLAGS;
 
     if (flags & COMP_OBJECT) {
-        char *objfile = (flags & COMP_OUTFILE_SPECIFIED) ? mystrdup(outfile) : replace_file_extension(basefile, "o", true);
+        char *objfile = replace_file_extension(basefile, "o", true);
         cmd = malloc(strlen(cc_path) + strlen(cflags) + strlen(objfile) + strlen(outc) + strlen(libs) + 24);
         sprintf(cmd, "%s %s -c -o %s %s %s", cc_path, cflags, objfile, outc, libs);
         *out_finalfile = objfile;
