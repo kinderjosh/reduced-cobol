@@ -1238,16 +1238,17 @@ char *emit_accept(AST *ast) {
     char *code = malloc((strlen(dst) * 3) + 238);
 
     // Also removes the trailing newline if found.
+    // TODO: Use read_buffer to check for shit?
     if ((type.type == TYPE_ALPHABETIC || type.type == TYPE_ALPHANUMERIC) && type.count > 0)
-        sprintf(code, "fgets(%s, %u, stdin);\n"
+        sprintf(code, "read_buffer = fgets(%s, %u, stdin);\n"
                       "%s[strcspn(%s, \"\\n\")] = '\\0';\n", dst, type.count + 1, dst, dst);
     else if (type.type == TYPE_DECIMAL_NUMERIC)
-        sprintf(code, "fgets(string_builder, 4095, stdin);\n"
+        sprintf(code, "read_buffer = fgets(string_builder, 4095, stdin);\n"
                       "string_builder[strcspn(string_builder, \"\\n\")] = '\\0';\n"
                       "%s = strtold(string_builder, &endptr);\n"
                       "if (string_builder == endptr || *endptr != '\\0' || errno == ERANGE || errno == EINVAL)\ncobol_error();\n", dst);
     else
-        sprintf(code, "fgets(string_builder, 4095, stdin);\n"
+        sprintf(code, "read_buffer = fgets(string_builder, 4095, stdin);\n"
                       "string_builder[strcspn(string_builder, \"\\n\")] = '\\0';\n"
                       "%s = strto%s(string_builder, &endptr, 10);\n"
                       "if (string_builder == endptr || *endptr != '\\0' || errno == ERANGE || errno == EINVAL)\ncobol_error();\n", dst, type.type == TYPE_SIGNED_NUMERIC ? "l" : "ul");

@@ -242,6 +242,14 @@ AST *parse_display(Parser *prs, ASTList *root) {
     const size_t ln = prs->tok->ln;
     const size_t col = prs->tok->col;
 
+    // This is the end of the display statement, doesn't print a newline, return nothing.
+    if (strcmp(prs->tok->value, "WITH") == 0 && strcmp(peek(prs, 1)->value, "NO") == 0 && strcmp(peek(prs, 2)->value, "ADVANCING") == 0) {
+        eat(prs, TOK_ID);
+        eat(prs, TOK_ID);
+        eat(prs, TOK_ID);
+        return NOP(ln, col);
+    }
+
     if (first_display) // Recursive function, only eat DISPLAY the first time.
         eat(prs, TOK_ID);
 
@@ -288,7 +296,15 @@ AST *parse_display(Parser *prs, ASTList *root) {
         // Invalid thing, stop.
         jump_to(prs, before);
         delete_ast(next);
-        ast->display.add_newline = true;
+
+        if (strcmp(prs->tok->value, "WITH") == 0 && strcmp(peek(prs, 1)->value, "NO") == 0 && strcmp(peek(prs, 2)->value, "ADVANCING") == 0) {
+            eat(prs, TOK_ID);
+            eat(prs, TOK_ID);
+            eat(prs, TOK_ID);
+            ast->display.add_newline = false;
+        } else
+            ast->display.add_newline = true;
+
         return ast;
     }
 
@@ -2360,7 +2376,7 @@ AST *parse_pic(Parser *prs) {
             pic->pic.type.places = 0;
             pic->pic.count = 0;
             pic->pic.is_index = true;
-            pic->pic.is_fd = false;
+            pic->pic.is_fd = pic->pic.is_linkage_src = false;
 
             Variable *var = add_variable(pic->file, pic->pic.name, pic->pic.type, pic->pic.count);
             var->is_index = true;
@@ -2375,6 +2391,7 @@ done: ;
     Variable *v = add_variable(ast->file, ast->pic.name, ast->pic.type, ast->pic.count);
 
     if (prs->cur_sect == SECT_LINKAGE) {
+        printf(">>>%s\n", ast->pic.name);
         v->is_linkage_src = ast->pic.is_linkage_src = true;
 
         if (ast->pic.value != NULL) {
@@ -2650,7 +2667,7 @@ AST *parse_fd(Parser *prs) {
     ast->pic.level = 1;
     ast->pic.type = (PictureType){ .type = TYPE_UNSIGNED_NUMERIC, .places = 0, .decimal_places = 0, .count = 0 };
     ast->pic.value = create_ast(AST_NULL, prs->tok->ln, prs->tok->col);
-    ast->pic.is_index = false;
+    ast->pic.is_index = ast->pic.is_linkage_src = false;
     ast->pic.is_fd = true;
 
     var = add_variable(prs->file, ast->pic.name, ast->pic.type, 0);

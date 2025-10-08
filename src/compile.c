@@ -93,6 +93,11 @@ int compile(char **infiles, size_t infile_count, char *outfile, unsigned int fla
 
     if (source_only)
         return status;
+    else if (error_count() > 0) {
+        free(cmd);
+        free(rm_cmd);
+        return status;
+    }
 
     if (system(cmd) != 0) {
         log_error(NULL, 0, 0);
@@ -110,7 +115,7 @@ int compile(char **infiles, size_t infile_count, char *outfile, unsigned int fla
 
     free(rm_cmd);
 
-    if (!run_exec)
+    if (!run_exec || error_count() > 0)
         return status;
 
     cmd = malloc(strlen(outfile) + 3);
