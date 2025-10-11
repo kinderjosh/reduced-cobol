@@ -36,6 +36,8 @@ void delete_ast(AST *ast) {
             
             if (ast->pic.value != NULL)
                 delete_ast(ast->pic.value);
+
+            delete_astlist(&ast->pic.fields);
             break;
         case AST_MOVE:
             delete_ast(ast->move.dst);
@@ -196,6 +198,15 @@ void delete_ast(AST *ast) {
         case AST_LENGTHOF:
             delete_ast(ast->lengthof_value);
             break;
+        case AST_FIELD:
+            delete_ast(ast->field.base);
+
+            if (ast->field.value != NULL)
+                delete_ast(ast->field.value);
+            break;
+        case AST_ADDRESSOF:
+            delete_ast(ast->addressof_value);
+            break;
         default: break;
     }
 
@@ -249,6 +260,8 @@ char *asttype_to_string(ASTType type) {
         case AST_ARGV: return "argv";
         case AST_EXIT: return "exit";
         case AST_LENGTHOF: return "length";
+        case AST_FIELD: return "field";
+        case AST_ADDRESSOF: return "address";
     }
 
     assert(false);

@@ -27,23 +27,25 @@ static size_t function_predefs_len;
 static size_t function_predefs_cap;
 
 char *picturetype_to_c(PictureType *type) {
-    if (type->type == TYPE_DECIMAL_NUMERIC || type->type == TYPE_DECIMAL_SUPRESSED_NUMERIC || type->comp_type == 1 || type->comp_type == 2)
-        return type->comp_type == 1 ? "float" : "double";
+    if (type->comp_type == COMP_POINTER)
+        return "void*";
+    else if (type->type == TYPE_DECIMAL_NUMERIC || type->type == TYPE_DECIMAL_SUPRESSED_NUMERIC || type->comp_type == COMP1 || type->comp_type == COMP2)
+        return type->comp_type == COMP1 ? "float" : "double";
 
     if (type->type == TYPE_SIGNED_NUMERIC || type->type == TYPE_SIGNED_SUPRESSED_NUMERIC) {
         if (type->places <= 4)
-            return type->comp_type == 5 ? "short" : "int16_t";
+            return type->comp_type == COMP5 ? "short" : "int16_t";
         else if (type->places <= 9)
-            return type->comp_type == 5 ? "int" : "int32_t";
+            return type->comp_type == COMP5 ? "int" : "int32_t";
         else
-            return type->comp_type == 5 ? "long long" : "int64_t";
+            return type->comp_type == COMP5 ? "long long" : "int64_t";
     } else if (type->type == TYPE_UNSIGNED_NUMERIC || type->type == TYPE_UNSIGNED_SUPRESSED_NUMERIC) {
         if (type->places <= 4)
-            return type->comp_type == 5 ? "unsigned short" : "uint16_t";
+            return type->comp_type == COMP5 ? "unsigned short" : "uint16_t";
         else if (type->places <= 9)
-            return type->comp_type == 5 ? "unsigned int" : "uint32_t";
+            return type->comp_type == COMP5 ? "unsigned int" : "uint32_t";
         else
-            return type->comp_type == 5 ? "unsigned long long" : "uint64_t";
+            return type->comp_type == COMP5 ? "unsigned long long" : "uint64_t";
     }
 
     return "char";
@@ -69,6 +71,7 @@ char *picturename_to_c(char *name) {
 }
 
 char *emit_stmt(AST *ast);
+PictureType get_value_type(AST *ast);
 
 char *value_to_string(AST *ast) {
     char *string;
@@ -108,11 +111,27 @@ char *value_to_string(AST *ast) {
         case AST_MATH:
         case AST_CONDITION:
         case AST_SUBSCRIPT:
+        case AST_LENGTHOF:
+        case AST_FIELD:
         case AST_NOT: return emit_stmt(ast);
         case AST_BOOL: return mystrdup(ast->bool_value ? "true" : "false");
         case AST_NULL: return mystrdup("NULL");
         case AST_ZERO: return mystrdup("0");
-        case AST_LENGTHOF: return emit_stmt(ast);
+        case AST_ADDRESSOF: {
+            char *value = value_to_string(ast->addressof_value);
+            PictureType type = get_value_type(ast->addressof_value);
+            char *ctype = picturetype_to_c(&type);
+
+            string = malloc(strlen(value) + strlen(ctype) + 13);
+
+            if (type.count > 0)
+                sprintf(string, "(%s**)(&%s)", ctype, value);
+            else
+                sprintf(string, "(%s*)(&%s)", ctype, value);
+
+            free(value);
+            return string;
+        }
         default: break;
     }
 
@@ -120,6 +139,18 @@ char *value_to_string(AST *ast) {
 
     assert(false);
     return calloc(1, sizeof(char));
+}
+
+Variable *get_struct_sym(AST *ast) {
+    if (ast->type == AST_VAR)
+        return ast->var.sym;
+    else if (ast->type == AST_FIELD)
+        return get_struct_sym(ast->field.base);
+
+    assert(false);
+    fprintf(stderr, "get_struct_sym ERROR!!!\n");
+    exit(EXIT_FAILURE);
+    return NULL; // Shut gcc up.
 }
 
 PictureType get_value_type(AST *ast) {
@@ -142,21 +173,24 @@ PictureType get_value_type(AST *ast) {
         case AST_CONDITION: return (PictureType){ .type = TYPE_UNSIGNED_NUMERIC, .count = 0 };
         case AST_SUBSCRIPT: {
             PictureType type = get_value_type(ast->subscript.base);
-
-            assert(ast->subscript.base->type == AST_VAR);
+            Variable *sym = get_struct_sym(ast->subscript.base);
 
             // A table of strings, the type is still a string, not a character.
             // TOFIX: this is a fucking mess.
-            if (ast->subscript.base->var.sym->count > 0 && ast->subscript.base->var.sym->type.count > 0) {
-                type.count = ast->subscript.base->var.sym->type.places;
-                return type;
-            }
+            if (sym->count > 0 && sym->type.count > 0)
+                type.count = sym->type.places;
+            else if (ast->subscript.base->type != AST_FIELD)
+                type.count = 0;
 
-            type.count = 0;
             return type;
         }
         // Make LENGTHOF COMP-5 to print as %zu
-        case AST_LENGTHOF: return (PictureType){ .type = TYPE_UNSIGNED_SUPRESSED_NUMERIC, .comp_type = 5, .count = 0, .places = 18 };
+        case AST_LENGTHOF: return (PictureType){ .type = TYPE_UNSIGNED_SUPRESSED_NUMERIC, .comp_type = COMP5, .count = 0, .places = 18 };
+        case AST_FIELD: return ast->field.sym->type;
+        case AST_ADDRESSOF:  {
+            PictureType type = get_value_type(ast->addressof_value);
+            return (PictureType){ .type = TYPE_POINTER, .count = type.count, .comp_type = COMP_POINTER };
+        }
         default: break;
     }
 
@@ -311,9 +345,11 @@ char *picturetype_to_format_specifier(PictureType *type) {
     char *spec = malloc(32);
 
     if (type->comp_type > 0) {
-        if (type->comp_type == 1)
+        if (type->comp_type == COMP_POINTER)
+            strcpy(spec, "%p");
+        else if (type->comp_type == COMP1)
             strcpy(spec, "%f");
-        else if (type->comp_type == 2)
+        else if (type->comp_type == COMP2)
             strcpy(spec, "%lf");
         else {
             if (type->places <= 9)
@@ -438,6 +474,34 @@ char *emit_pic(AST *ast) {
     return calloc(1, sizeof(char));
 }
 
+char *emit_struct_pic(AST *ast) {
+    char *name = picturename_to_c(ast->pic.name);
+    const size_t name_len = strlen(name);
+    append_global("typedef struct {\n");
+
+    for (size_t i = 0; i < ast->pic.fields.size; i++) {
+        AST *field = ast->pic.fields.items[i];
+        assert(field->pic.fields.size == 0);
+        // emit_pic() returns '\0'.
+        free(emit_stmt(field));
+    }
+    
+    char *def = malloc(name_len + 13);
+    sprintf(def, "} %sSTRUCT;\n", name);
+    append_global(def);
+    free(def);
+
+    char *code = malloc((name_len * 2) + 64);
+
+    if (ast->pic.count > 0)
+        sprintf(code, "%sSTRUCT %s[%u];\n", name, name, ast->pic.count);
+    else
+        sprintf(code, "%sSTRUCT %s;\n", name, name);
+
+    free(name);
+    return code;
+}
+
 char *emit_move(AST *ast) {
     char *dst = value_to_string(ast->move.dst);
     char *src = value_to_string(ast->move.src);
@@ -446,7 +510,14 @@ char *emit_move(AST *ast) {
     PictureType dst_type = get_value_type(ast->move.dst);
     PictureType src_type = get_value_type(ast->move.src);
 
-    if (IS_STRING(dst_type) && IS_STRING(src_type)) {
+    if (!ast->move.is_set && dst_type.comp_type == COMP_POINTER) {
+        // Get the dereferenced pointer type.
+        dst_type.comp_type = 0;
+        char *ctype = picturetype_to_c(&dst_type);
+
+        code = malloc(strlen(src) + strlen(dst) + strlen(ctype) + 64);
+        sprintf(code, "*((%s*)%s) = %s;\n", ctype, dst, src);
+    } else if (IS_STRING(dst_type) && IS_STRING(src_type)) {
         code = malloc(strlen(src) + strlen(dst) + 64);
         sprintf(code, "strncpy(%s, %s, %u);\n", dst, src, dst_type.count + 1);
     } else if (IS_STRING(dst_type)) {
@@ -776,7 +847,16 @@ char *emit_subscript(AST *ast) {
     char *index = value_to_string(ast->subscript.index);
     char *code;
 
-    if (ast->subscript.value == NULL) {
+    if (ast->subscript.base->type == AST_FIELD) {
+        char *struct_name = picturename_to_c(get_struct_sym(ast->subscript.base)->name);
+        char *field_name = picturename_to_c(ast->subscript.base->field.sym->name);
+
+        code = malloc(strlen(struct_name) + strlen(field_name) + strlen(index) + 24);
+        sprintf(code, "%s[(size_t)(%s - 1)].%s", struct_name, index, field_name);
+
+        free(struct_name);
+        free(field_name);
+    } else if (ast->subscript.value == NULL) {
         code = malloc(strlen(base) + strlen(index) + 21);
         sprintf(code, "%s[(size_t)(%s - 1)]", base, index);
     } else {
@@ -1299,13 +1379,25 @@ char *emit_lengthof(AST *ast) {
     return code;
 }
 
+char *emit_field(AST *ast) {
+    assert(ast->field.value == NULL);
+
+    char *base = value_to_string(ast->field.base);
+    char *name = picturename_to_c(ast->field.sym->name);
+    char *code = malloc(strlen(base) + strlen(name) + 6);
+    sprintf(code, "%s.%s", base, name);
+    free(name);
+    free(base);
+    return code;
+}
+
 char *emit_stmt(AST *ast) {
     switch (ast->type) {
         case AST_NOP: return calloc(1, sizeof(char));
         case AST_STOP_RUN: return emit_stop_run(ast);
         case AST_STOP: return emit_stop(ast);
         case AST_DISPLAY: return emit_display(ast);
-        case AST_PIC: return emit_pic(ast);
+        case AST_PIC: return ast->pic.fields.size > 0 ? emit_struct_pic(ast) : emit_pic(ast);
         case AST_MOVE: return emit_move(ast);
         case AST_ARITHMETIC: return emit_arithmetic(ast);
         case AST_COMPUTE: return emit_compute(ast);
@@ -1333,6 +1425,7 @@ char *emit_stmt(AST *ast) {
         case AST_ACCEPT: return emit_accept(ast);
         case AST_EXIT: return mystrdup("exit(EXIT_SUCCESS);\n");
         case AST_LENGTHOF: return emit_lengthof(ast);
+        case AST_FIELD: return emit_field(ast);
         default: break;
     }
 

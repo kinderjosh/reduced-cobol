@@ -5,7 +5,7 @@
       * A numerical variable.
        01 WS-NUM PIC S9(05)V9(02) VALUE 55.
       * A string to store the conversion into.
-       01 WS-STRING PIC X(07).
+       01 WS-STRING PIC X(16).
        PROCEDURE DIVISION.
       * A simple move will convert types.
            MOVE WS-NUM TO WS-STRING.

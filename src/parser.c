@@ -21,7 +21,7 @@
 #define IS_CONDITION(prs) (prs->tok->type == TOK_EQ || prs->tok->type == TOK_EQUAL || prs->tok->type == TOK_NEQ || prs->tok->type == TOK_LT || prs->tok->type == TOK_LTE || prs->tok->type == TOK_GT || prs->tok->type == TOK_GTE || strcmp(prs->tok->value, "IS") == 0 || strcmp(prs->tok->value, "AND") == 0 || strcmp(prs->tok->value, "OR") == 0 || (strcmp(prs->tok->value, "NOT") == 0 && strcmp(peek(prs, 1)->value, "EQUAL") == 0))
 
 // TODO: Implement COMP-3 and COMP-6.
-#define IS_COMP(prs) (strcmp(prs->tok->value, "COMP") == 0 || strcmp(prs->tok->value, "COMP-1") == 0 || strcmp(prs->tok->value, "COMP-2") == 0 || strcmp(prs->tok->value, "COMP-4") == 0 || strcmp(prs->tok->value, "COMP-5") == 0)
+#define IS_COMP(tok) (strcmp(tok->value, "COMP") == 0 || strcmp(tok->value, "COMP-1") == 0 || strcmp(tok->value, "COMP-2") == 0 || strcmp(tok->value, "COMP-4") == 0 || strcmp(tok->value, "COMP-5") == 0)
 
 #define TABLE_SIZE 10000
 
@@ -85,6 +85,8 @@ Variable *add_variable(char *file, char *name, PictureType type, unsigned int co
     var->count = count;
     var->used = true;
     var->is_fd = var->is_index = var->is_label = var->is_linkage_src = var->using_in_proc_div = false;
+    var->fields = NULL;
+    var->struct_sym = NULL;
     return var;
 }
 
@@ -173,6 +175,7 @@ bool expect_identifier(Parser *prs, char *id) {
 
 AST *parse_stmt(Parser *prs);
 AST *parse_math(Parser *prs, AST *first, unsigned int type);
+AST *parse_subscript(Parser *prs, AST *base);
 
 AST *parse_value(Parser *prs, unsigned int type) {
     // TODO: Actually kinda check types bruh?
@@ -191,9 +194,15 @@ AST *parse_value(Parser *prs, unsigned int type) {
         case AST_NULL:
         case AST_BOOL:
         case AST_ZERO:
-        case AST_LENGTHOF: break;
+        case AST_LENGTHOF:
+        case AST_ADDRESSOF: break;
         case AST_SUBSCRIPT:
             if (value->subscript.value == NULL)
+                break;
+
+            goto fallthrough;
+        case AST_FIELD:
+            if (value->field.value == NULL)
                 break;
 
             goto fallthrough;
@@ -205,13 +214,17 @@ fallthrough:
             break;
     }
 
-    if (prs->parse_extra_value && IS_MATH(prs))
+    if (!prs->parse_extra_value)
+        return value;
+
+    if (IS_MATH(prs))
         return parse_math(prs, value, type);
+    else if (prs->tok->type == TOK_LPAREN)
+        return parse_subscript(prs, value);
 
     return value;
 }
 
-AST *parse_subscript(Parser *prs, AST *base);
 AST *parse_id(Parser *prs);
 
 // TOFIX: I really don't like how gross and builtin this shit is.
@@ -220,27 +233,41 @@ AST *parse_any_no_error(Parser *prs) {
         return parse_stmt(prs);
     else if (strcmp(prs->tok->value, "LENGTH") == 0)
         return parse_id(prs);
+    else if (strcmp(prs->tok->value, "ADDRESS") == 0)
+        return parse_id(prs);
 
-    Variable *var = NULL;
+    Variable *var = find_variable(prs->file, prs->tok->value);
+    
+    if (!var->used)
+        return NOP(prs->tok->ln, prs->tok->col);
+    
+    AST *ast;
 
-    if ((var = find_variable(prs->file, prs->tok->value))->used) {
-        AST *ast = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
+    if (var->struct_sym != NULL) {
+        ast = create_ast(AST_FIELD, prs->tok->ln, prs->tok->col);
+        ast->field.sym = var;
+        ast->field.base = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
+        ast->field.base->var.name = mystrdup(var->struct_sym->name);
+        ast->field.base->var.sym = var->struct_sym;
+        ast->field.value = NULL;
+    } else {
+        ast = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
         ast->var.name = mystrdup(prs->tok->value);
         ast->var.sym = var;
-        eat(prs, TOK_ID);
-
-        if (prs->tok->type == TOK_LPAREN)
-            return parse_subscript(prs, ast);
-
-        return ast;
     }
 
-    //eat(prs, prs->tok->type);
-    return NOP(prs->tok->ln, prs->tok->col);
+    eat(prs, TOK_ID);
+
+    if (prs->tok->type == TOK_LPAREN)
+        return parse_subscript(prs, ast);
+
+    return ast;
 }
 
 static bool displayed_previously;
 static bool first_display;
+
+#define LAST_DISPLAY_VALUE_WASNT_VALID(thing) (thing->type != AST_STRING && thing->type != AST_VAR && thing->type != AST_SUBSCRIPT && thing->type != AST_LENGTHOF && thing->type != AST_FIELD && thing->type != AST_ADDRESSOF)
 
 AST *parse_display(Parser *prs, ASTList *root) {
     const size_t ln = prs->tok->ln;
@@ -262,7 +289,7 @@ AST *parse_display(Parser *prs, ASTList *root) {
     jump_to(prs, before);
 
     // End of display.
-    if (thing->type != AST_STRING && thing->type != AST_VAR && thing->type != AST_SUBSCRIPT && thing->type != AST_LENGTHOF) {
+    if (LAST_DISPLAY_VALUE_WASNT_VALID(thing)) {
         delete_ast(thing);
 
         if (!displayed_previously)
@@ -278,7 +305,7 @@ AST *parse_display(Parser *prs, ASTList *root) {
 
     delete_ast(thing);
     AST *ast = create_ast(AST_DISPLAY, ln, col);
-    ast->display.value = parse_stmt(prs);
+    ast->display.value = parse_value(prs, TYPE_ANY);
 
     if (ast->display.value->type == AST_INT || ast->display.value->type == AST_FLOAT) {
         log_error(ast->file, ast->ln, ast->col);
@@ -296,7 +323,7 @@ AST *parse_display(Parser *prs, ASTList *root) {
     before = prs->pos;
     AST *next = parse_any_no_error(prs);
 
-    if (next->type != AST_STRING && next->type != AST_VAR && next->type != AST_SUBSCRIPT && next->type != AST_LENGTHOF) {
+    if (LAST_DISPLAY_VALUE_WASNT_VALID(next)) {
         // Invalid thing, stop.
         jump_to(prs, before);
         delete_ast(next);
@@ -383,8 +410,9 @@ AST *parse_move(Parser *prs) {
     */
 
     AST *ast = create_ast(AST_MOVE, ln, col);
-    //ast->move.src = parse_value(prs, type);
+    ast->move.is_set = false;
     ast->move.src = parse_value(prs, TYPE_ANY);
+    //ast->move.src = parse_value(prs, type);
 
     if (!expect_identifier(prs, "TO")) {
         eat_until(prs, TOK_DOT);
@@ -1086,12 +1114,57 @@ AST *parse_procedure(Parser *prs) {
     return ast;
 }
 
+AST *parse_field(Parser *prs, AST *base) {
+    assert(base->type == AST_VAR);
+    eat(prs, TOK_LPAREN);
+
+    if (!expect_identifier(prs, NULL)) {
+        eat_until(prs, TOK_DOT);
+        return base;
+    }
+
+    Variable *sym = find_variable(prs->file, prs->tok->value);
+    bool found = false;
+
+    for (size_t i = 0; i < base->var.sym->fields->size; i++) {
+        if (strcmp(base->var.sym->fields->items[i]->pic.name, prs->tok->value) == 0) {
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "undefined field '%s' in group variable '%s'\n", prs->tok->value, base->var.name);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return base;
+    }
+
+    eat(prs, TOK_ID);
+    eat(prs, TOK_RPAREN);
+
+    AST *ast = create_ast(AST_FIELD, base->ln, base->col);
+    ast->field.sym = sym;
+    ast->field.base = base;
+    ast->field.value = NULL;
+    return ast;
+}
+
 AST *parse_subscript(Parser *prs, AST *base) {
     unsigned int table_size = 1;
+    bool unknown_size = false;
 
     switch (base->type) {
         case AST_VAR:
-            if (base->var.sym->count > 0) {
+            // Just let pointers be accessed.
+            if (base->var.sym->type.comp_type == COMP_POINTER) {
+                unknown_size = true;
+                break;
+            }
+
+            else if (base->var.sym->count > 0) {
                 table_size = base->var.sym->count;
                 break;
             }
@@ -1099,10 +1172,31 @@ AST *parse_subscript(Parser *prs, AST *base) {
             else if ((base->var.sym->type.type == TYPE_ALPHABETIC || base->var.sym->type.type == TYPE_ALPHANUMERIC) && base->var.sym->type.count > 0) {
                 table_size = base->var.sym->type.count;
                 break;
-            }
+            } else if (base->var.sym->fields->size > 0)
+                return parse_field(prs, base);
 
             log_error(base->file, base->ln, base->col);
             fprintf(stderr, "accessing non-table variable '%s'\n", base->var.name);
+            show_error(base->file, base->ln, base->col);
+            break;
+        case AST_FIELD:
+            if (base->field.sym->count > 0) {
+                table_size = base->field.sym->count;
+                break;
+            }
+            // Strings should also be accessible.
+            else if ((base->field.sym->type.type == TYPE_ALPHABETIC || base->field.sym->type.type == TYPE_ALPHANUMERIC) && base->field.sym->type.count > 0) {
+                table_size = base->field.sym->type.count;
+                break;
+            } else if (base->field.sym->fields != NULL && base->field.sym->fields->size > 0)
+                return parse_field(prs, base);
+            else if (base->field.sym->struct_sym->count > 0) {
+                table_size = base->field.sym->struct_sym->count;
+                break;
+            }
+
+            log_error(base->file, base->ln, base->col);
+            fprintf(stderr, "accessing non-table variable '%s'\n", base->field.sym->name);
             show_error(base->file, base->ln, base->col);
             break;
         // We don't know the count at compile time, 
@@ -1123,38 +1217,40 @@ AST *parse_subscript(Parser *prs, AST *base) {
     eat(prs, TOK_LPAREN);
     AST *index = parse_value(prs, TYPE_ANY);
 
-    switch (index->type) {
-        case AST_NOP:
-        case AST_MATH:
-        case AST_SUBSCRIPT: break;
-        case AST_INT:
-            if (index->constant.i32 < 1) {
+    if (!unknown_size) {
+        switch (index->type) {
+            case AST_NOP:
+            case AST_MATH:
+            case AST_SUBSCRIPT: break;
+            case AST_INT:
+                if (index->constant.i32 < 1) {
+                    log_error(index->file, index->ln, index->col);
+                    fprintf(stderr, "subscript %d goes below the minimum of 1\n", index->constant.i32);
+                    show_error(index->file, index->ln, index->col);
+                } else if ((unsigned int)index->constant.i32 > table_size) {
+                    log_error(index->file, index->ln, index->col);
+                    fprintf(stderr, "subscript %d goes out of bounds of table size %u\n", index->constant.i32, table_size);
+                    show_error(index->file, index->ln, index->col);
+                }
+                break;
+            case AST_VAR:
+                if (index->var.sym->count > 0) {
+                    log_error(index->file, index->ln, index->col);
+                    fprintf(stderr, "subscript variable '%s' is a table\n", index->var.name);
+                    show_error(index->file, index->ln, index->col);
+                } else if (index->var.sym->type.type != TYPE_UNSIGNED_NUMERIC && index->var.sym->type.type != TYPE_SIGNED_NUMERIC && 
+                        index->var.sym->type.type != TYPE_SIGNED_SUPRESSED_NUMERIC && index->var.sym->type.type != TYPE_UNSIGNED_SUPRESSED_NUMERIC) {
+                    log_error(index->file, index->ln, index->col);
+                    fprintf(stderr, "subscript variable '%s' is not numeric\n", index->var.name);
+                    show_error(index->file, index->ln, index->col);
+                }
+                break;
+            default:
                 log_error(index->file, index->ln, index->col);
-                fprintf(stderr, "subscript %d goes below the minimum of 1\n", index->constant.i32);
+                fprintf(stderr, "invalid subscript value '%s'\n", asttype_to_string(index->type));
                 show_error(index->file, index->ln, index->col);
-            } else if ((unsigned int)index->constant.i32 > table_size) {
-                log_error(index->file, index->ln, index->col);
-                fprintf(stderr, "subscript %d goes out of bounds of table size %u\n", index->constant.i32, table_size);
-                show_error(index->file, index->ln, index->col);
-            }
-            break;
-        case AST_VAR:
-            if (index->var.sym->count > 0) {
-                log_error(index->file, index->ln, index->col);
-                fprintf(stderr, "subscript variable '%s' is a table\n", index->var.name);
-                show_error(index->file, index->ln, index->col);
-            } else if (index->var.sym->type.type != TYPE_UNSIGNED_NUMERIC && index->var.sym->type.type != TYPE_SIGNED_NUMERIC && 
-                    index->var.sym->type.type != TYPE_SIGNED_SUPRESSED_NUMERIC && index->var.sym->type.type != TYPE_UNSIGNED_SUPRESSED_NUMERIC) {
-                log_error(index->file, index->ln, index->col);
-                fprintf(stderr, "subscript variable '%s' is not numeric\n", index->var.name);
-                show_error(index->file, index->ln, index->col);
-            }
-            break;
-        default:
-            log_error(index->file, index->ln, index->col);
-            fprintf(stderr, "invalid subscript value '%s'\n", asttype_to_string(index->type));
-            show_error(index->file, index->ln, index->col);
-            break;
+                break;
+        }
     }
 
     ast->subscript.index = index;
@@ -1181,7 +1277,7 @@ AST *parse_set(Parser *prs) {
 
         eat_until(prs, TOK_DOT);
         return NOP(ln, col);
-    } else if (!var->is_index) {
+    } else if (!var->is_index && var->type.comp_type != COMP_POINTER) {
         log_error(prs->file, prs->tok->ln, prs->tok->col);
         fprintf(stderr, "setting non-index variable '%s'\n", prs->tok->value);
         show_error(prs->file, prs->tok->ln, prs->tok->col);
@@ -1226,6 +1322,7 @@ AST *parse_set(Parser *prs) {
     eat(prs, TOK_ID);
 
     AST *ast = create_ast(AST_MOVE, ln, col);
+    ast->move.is_set = true;
     ast->move.dst = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
     ast->move.dst->var.name = name;
     ast->move.dst->var.sym = var;
@@ -1931,15 +2028,14 @@ AST *parse_id(Parser *prs) {
         AST *ast = create_ast(AST_INT, ln, col);
         ast->constant.i32 = ' ';
         return ast;
-    } else if (strcmp(prs->tok->value, "LENGTH") == 0) {
+    } else if (strcmp(prs->tok->value, "LENGTH") == 0 || strcmp(prs->tok->value, "ADDRESS") == 0) {
+        const bool is_length = strcmp(prs->tok->value, "LENGTH") == 0;
         eat(prs, TOK_ID);
 
         if (!expect_identifier(prs, "OF"))
             return NOP(ln, col);
 
         eat(prs, TOK_ID);
-
-        AST *ast = create_ast(AST_LENGTHOF, ln, col);
 
         // Set prs->parse_extra_value to false because we don't want
         // other values getting inside strlen().
@@ -1948,7 +2044,17 @@ AST *parse_id(Parser *prs) {
 
         bool before = prs->parse_extra_value;
         prs->parse_extra_value = false;
-        ast->lengthof_value = parse_value(prs, TYPE_ANY);
+
+        AST *ast;
+        
+        if (is_length) {
+            ast = create_ast(AST_LENGTHOF, ln, col);
+            ast->lengthof_value = parse_value(prs, TYPE_ANY);
+        } else {
+            ast = create_ast(AST_ADDRESSOF, ln, col);
+            ast->addressof_value = parse_value(prs, TYPE_ANY);
+        }
+
         prs->parse_extra_value = before;
         return ast;
     }
@@ -1959,6 +2065,15 @@ AST *parse_id(Parser *prs) {
         if (sym->is_label) {
             AST *ast = create_ast(AST_LABEL, ln, col);
             ast->label = mystrdup(prs->tok->value);
+            eat(prs, TOK_ID);
+            return ast;
+        } else if (sym->struct_sym != NULL) {
+            AST *ast = create_ast(AST_FIELD, ln, col);
+            ast->field.base = create_ast(AST_VAR, ln, col);
+            ast->field.base->var.name = mystrdup(sym->struct_sym->name);
+            ast->field.base->var.sym = sym->struct_sym;
+            ast->field.sym = sym;
+            ast->field.value = NULL;
             eat(prs, TOK_ID);
             return ast;
         }
@@ -2141,31 +2256,38 @@ unsigned int parse_comptype(Parser *prs, AST *ast) {
     if (strcmp(prs->tok->value, "COMP") == 0 || strcmp(prs->tok->value, "COMP-4") == 0 || strcmp(prs->tok->value, "BINARY") == 0) {
         if (ast != NULL && ast->pic.type.decimal_places > 0) {
             log_error(prs->file, prs->tok->ln, prs->tok->col);
-            fprintf(stderr, "COMPUTATION type '%s' used for non-integer variable '%s'\n", prs->tok->value, ast->pic.name);
+            fprintf(stderr, "COMP type '%s' used for non-integer variable '%s'\n", prs->tok->value, ast->pic.name);
             show_error(prs->file, prs->tok->ln, prs->tok->col);
         }
 
-        return 4;
+        return COMP4;
     } else if (strcmp(prs->tok->value, "COMP-1") == 0) {
         if (ast != NULL) {
             log_error(prs->file, prs->tok->ln, prs->tok->col);
-            fprintf(stderr, "COMPUTATION type '%s' used in a PIC clause for variable '%s'\n", prs->tok->value, ast->pic.name);
+            fprintf(stderr, "COMP type '%s' used in a PIC clause for variable '%s'\n", prs->tok->value, ast->pic.name);
             show_error(prs->file, prs->tok->ln, prs->tok->col);
         }
 
-        return 1;
+        return COMP1;
     } else if (strcmp(prs->tok->value, "COMP-2") == 0) {
         if (ast != NULL) {
             log_error(prs->file, prs->tok->ln, prs->tok->col);
-            fprintf(stderr, "COMPUTATION type '%s' used in a PIC clause for variable '%s'\n", prs->tok->value, ast->pic.name);
+            fprintf(stderr, "COMP type '%s' used in a PIC clause for variable '%s'\n", prs->tok->value, ast->pic.name);
             show_error(prs->file, prs->tok->ln, prs->tok->col);
         }
 
-        return 2;
+        return COMP2;
     } else if (strcmp(prs->tok->value, "COMP-5") == 0)
-        return 5;
+        return COMP5;
+    else if (strcmp(prs->tok->value, "POINTER") == 0)
+        return COMP_POINTER;
+    else {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "invalid COMP type '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+        return 0;
+    }
 
-    assert(false);
     return 0;
 }
 
@@ -2186,6 +2308,7 @@ AST *parse_pic(Parser *prs) {
     ast->pic.name = name;
     ast->pic.is_index = ast->pic.is_fd = ast->pic.is_linkage_src = false;
     ast->pic.count = 0;
+    ast->pic.fields = create_astlist();
 
     bool had_pic = false;
 
@@ -2305,7 +2428,7 @@ AST *parse_pic(Parser *prs) {
         eat(prs, TOK_ID);
         eat(prs, TOK_ID);
 
-        if (IS_COMP(prs))
+        if (IS_COMP(prs->tok))
             ast->pic.type.comp_type = parse_comptype(prs, ast);
         else {
             log_error(prs->file, prs->tok->ln, prs->tok->col);
@@ -2381,6 +2504,7 @@ AST *parse_pic(Parser *prs) {
             AST *pic = create_ast(AST_PIC, prs->tok->ln, prs->tok->col);
             pic->pic.name = mystrdup(prs->tok->value);
             pic->pic.level = ast->pic.level;
+            pic->pic.fields = create_astlist();
 
             // Initialize to first index = 1.
             pic->pic.value = create_ast(AST_INT, prs->tok->ln, prs->tok->col);
@@ -2406,7 +2530,6 @@ done: ;
     Variable *v = add_variable(ast->file, ast->pic.name, ast->pic.type, ast->pic.count);
 
     if (prs->cur_sect == SECT_LINKAGE) {
-        printf(">>>%s\n", ast->pic.name);
         v->is_linkage_src = ast->pic.is_linkage_src = true;
 
         if (ast->pic.value != NULL) {
@@ -2437,8 +2560,9 @@ AST *parse_comp_pic(Parser *prs) {
     ast->pic.level = level->constant.i32;
     delete_ast(level);
     ast->pic.name = name;
-    ast->pic.is_index = ast->pic.is_fd = false;
+    ast->pic.is_index = ast->pic.is_fd = ast->pic.is_linkage_src = false;
     ast->pic.count = 0;
+    ast->pic.fields = create_astlist();
 
     eat(prs, TOK_ID); // USAGE
     eat(prs, TOK_ID); // IS
@@ -2446,10 +2570,10 @@ AST *parse_comp_pic(Parser *prs) {
     ast->pic.type.count = ast->pic.count = 0;
     ast->pic.type.comp_type = parse_comptype(prs, NULL);
 
-    // Floats and doubles don't require PIC, but everything else does.
-    if (ast->pic.type.comp_type != 1 && ast->pic.type.comp_type != 2) {
+    // Floats, doubles and pointers don't require PIC, but everything else does.
+    if (ast->pic.type.comp_type != COMP_POINTER && ast->pic.type.comp_type != COMP1 && ast->pic.type.comp_type != COMP2) {
         log_error(prs->file, prs->tok->ln, prs->tok->col);
-        fprintf(stderr, "missing PIC clause for COMPUTATION type '%s' for variable '%s'\n", prs->tok->value, ast->pic.name);
+        fprintf(stderr, "missing PIC clause for COMP type '%s' for variable '%s'\n", prs->tok->value, ast->pic.name);
         show_error(prs->file, prs->tok->ln, prs->tok->col);
         ast->pic.type.type = TYPE_SIGNED_NUMERIC;
     }
@@ -2467,6 +2591,96 @@ AST *parse_comp_pic(Parser *prs) {
     if (prs->cur_sect == SECT_LINKAGE)
         v->is_linkage_src = true;
 
+    return ast;
+}
+
+AST *parse_struct_pic(Parser *prs) {
+    AST *level = parse_constant(prs);
+    unsigned int level_digit = level->constant.i32;
+    delete_ast(level);
+
+    Variable *var = find_variable(prs->file, prs->tok->value);
+
+    if (var->used) {
+        log_error(prs->file, prs->tok->ln, prs->tok->col);
+        fprintf(stderr, "redefinition of variable '%s'\n", prs->tok->value);
+        show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+        eat_until(prs, TOK_DOT);
+        return NOP(prs->tok->ln, prs->tok->col);
+    }
+
+    AST *ast = create_ast(AST_PIC, prs->tok->ln, prs->tok->col);
+    ast->pic.level = level_digit;
+    ast->pic.name = mystrdup(prs->tok->value);
+    eat(prs, TOK_ID);
+    ast->pic.type = (PictureType){ .type = TYPE_POINTER, .count = 0, .places = 0 };
+    ast->pic.count = 0;
+    ast->pic.is_fd = ast->pic.is_index = ast->pic.is_linkage_src = false;
+    ast->pic.value = NULL;
+    ast->pic.fields = create_astlist();
+
+    if (strcmp(prs->tok->value, "OCCURS") == 0) {
+        eat(prs, TOK_ID);
+
+        if (prs->tok->type != TOK_INT) {
+            log_error(prs->file, prs->tok->ln, prs->tok->col);
+            fprintf(stderr, "non-integer constant table size %s for variable '%s'\n", tokentype_to_string(prs->tok->type), ast->pic.name);
+            show_error(prs->file, prs->tok->ln, prs->tok->col);
+
+            eat_until(prs, TOK_DOT);
+        } else {
+            AST *size = parse_constant(prs);
+            ast->pic.count = size->constant.i32;
+            delete_ast(size);
+
+            if (expect_identifier(prs, "TIMES"))
+                eat(prs, TOK_ID);
+        }
+    }
+
+    eat(prs, TOK_DOT);
+    var = add_variable(prs->file, ast->pic.name, ast->pic.type, ast->pic.count);
+
+    // Place upcoming lower-level PICs inside this struct.
+    while (prs->tok->type == TOK_INT && peek(prs, 1)->type == TOK_ID) {
+        size_t before = prs->pos;
+        AST *field_level = parse_constant(prs);
+        jump_to(prs, before);
+
+        if ((unsigned int)field_level->constant.i32 <= ast->pic.level) {
+            delete_ast(field_level);
+            break;
+        }
+
+        delete_ast(field_level);
+
+        Token *next2 = peek(prs, 2);
+        AST *field;
+
+        if (next2->type == TOK_DOT || strcmp(next2->value, "OCCURS") == 0)
+            field = parse_struct_pic(prs);
+        else if (strcmp(next2->value, "PIC") == 0)
+            field = parse_pic(prs);
+        else if (IS_COMP(next2))
+            field = parse_comp_pic(prs);
+        else {
+            assert(false);
+            break;
+        }
+
+        // Make sure this symbol is known to be a field by filling
+        // in the struct pointer symbol.
+        Variable *fsym = find_variable(field->file, field->pic.name);
+        assert(fsym != NULL);
+        fsym->struct_sym = var;
+
+        astlist_push(&ast->pic.fields, field);
+        eat(prs, TOK_DOT);
+    }
+
+    // Add the symbol and point the fields to the struct's fields.
+    var->fields = &ast->pic.fields;
     return ast;
 }
 
@@ -2604,11 +2818,9 @@ void parse_linkage_section(Parser *prs) {
             Token *next = peek(prs, 1);
             Token *ahead = peek(prs, 2);
         
-            if (ahead->type == TOK_DOT && next->type == TOK_ID) {
-                // Level statement with no PIC.
-                eat(prs, TOK_INT);
-                eat(prs, TOK_ID);
-            } else if (next->type == TOK_ID) {
+            if (next->type == TOK_ID && (ahead->type == TOK_DOT || strcmp(ahead->value, "OCCURS") == 0))
+                astlist_push(root_ptr, parse_struct_pic(prs));
+            else if (next->type == TOK_ID) {
                 if (strcmp(ahead->value, "PIC") == 0)
                     astlist_push(root_ptr, parse_pic(prs));
                 else if (strcmp(ahead->value, "USAGE") == 0)
@@ -2638,11 +2850,9 @@ void parse_working_storage_section(Parser *prs) {
             Token *next = peek(prs, 1);
             Token *ahead = peek(prs, 2);
         
-            if (ahead->type == TOK_DOT && next->type == TOK_ID) {
-                // Level statement with no PIC.
-                eat(prs, TOK_INT);
-                eat(prs, TOK_ID);
-            } else if (next->type == TOK_ID) {
+            if (next->type == TOK_ID && (ahead->type == TOK_DOT || strcmp(ahead->value, "OCCURS") == 0))
+                astlist_push(root_ptr, parse_struct_pic(prs));
+            else if (next->type == TOK_ID) {
                 if (strcmp(ahead->value, "PIC") == 0)
                     astlist_push(root_ptr, parse_pic(prs));
                 else if (strcmp(ahead->value, "USAGE") == 0)
@@ -2684,6 +2894,7 @@ AST *parse_fd(Parser *prs) {
     ast->pic.value = create_ast(AST_NULL, prs->tok->ln, prs->tok->col);
     ast->pic.is_index = ast->pic.is_linkage_src = false;
     ast->pic.is_fd = true;
+    ast->pic.fields = create_astlist();
 
     var = add_variable(prs->file, ast->pic.name, ast->pic.type, 0);
     var->is_index = var->is_label = false;

@@ -16,16 +16,29 @@ typedef struct {
         TYPE_DECIMAL_NUMERIC,
         TYPE_SIGNED_SUPRESSED_NUMERIC,
         TYPE_UNSIGNED_SUPRESSED_NUMERIC,
-        TYPE_DECIMAL_SUPRESSED_NUMERIC
+        TYPE_DECIMAL_SUPRESSED_NUMERIC,
+        TYPE_POINTER
     } type;
 
     unsigned int places;
     unsigned int decimal_places; // Only for floats.
     unsigned int count;
-    unsigned int comp_type;
+
+    enum {
+        // Leave 0 for error values.
+        COMP_POINTER = 1,
+        COMP1,
+        COMP2,
+        COMP3,
+        COMP4,
+        COMP5,
+        COMP6
+    } comp_type;
 } PictureType;
 
-typedef struct {
+typedef struct ASTList ASTList;
+
+typedef struct Variable {
     char *file;
     char *name;
     PictureType type;
@@ -36,6 +49,8 @@ typedef struct {
     bool is_fd;
     bool is_linkage_src;
     bool using_in_proc_div;
+    ASTList *fields;
+    struct Variable *struct_sym;
 } Variable;
 
 typedef enum {
@@ -82,7 +97,9 @@ typedef enum {
     AST_ZERO,
     AST_ARGV,
     AST_EXIT,
-    AST_LENGTHOF
+    AST_LENGTHOF,
+    AST_FIELD,
+    AST_ADDRESSOF
 } ASTType;
 
 typedef struct AST AST;
@@ -155,7 +172,7 @@ typedef struct AST {
     union {
         ASTList root;
         
-        union {
+        struct {
             int32_t i32;
             double f64;
             char *string;
@@ -180,11 +197,13 @@ typedef struct AST {
             bool is_index;
             bool is_fd;
             bool is_linkage_src;
+            ASTList fields;
         } pic;
 
         struct {
             AST *dst;
             AST *src;
+            bool is_set;
         } move;
 
         struct {
@@ -333,6 +352,14 @@ typedef struct AST {
         } accept;
 
         AST *lengthof_value;
+
+        struct {
+            Variable *sym;
+            AST *base;
+            AST *value;
+        } field;
+
+        AST *addressof_value;
     };
 } AST;
 
