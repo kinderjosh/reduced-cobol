@@ -33,6 +33,8 @@ static Variable variables[TABLE_SIZE];
 // so we just append to this list.
 static ASTList *root_ptr;
 
+static size_t uids = 0;
+
 char *cur_file;
 
 uint32_t hash_FNV1a(const char *data, size_t size) {
@@ -84,10 +86,68 @@ Variable *add_variable(char *file, char *name, PictureType type, unsigned int co
     var->type = type;
     var->count = count;
     var->used = true;
-    var->is_fd = var->is_index = var->is_label = var->is_linkage_src = var->using_in_proc_div = false;
+    var->is_fd = var->is_index = var->is_label = var->is_linkage_src = var->using_in_proc_div = var->pointer_been_set = false;
     var->fields = NULL;
     var->struct_sym = NULL;
+    var->uid = uids++;
+    var->type.pointer_uid = var->uid;
     return var;
+}
+
+Variable *get_struct_sym(AST *ast) {
+    if (ast->type == AST_VAR)
+        return ast->var.sym;
+    else if (ast->type == AST_FIELD)
+        return get_struct_sym(ast->field.base);
+
+    assert(false);
+    fprintf(stderr, "get_struct_sym ERROR!!!\n");
+    exit(EXIT_FAILURE);
+    return NULL; // Shut gcc up.
+}
+
+PictureType get_value_type(AST *ast) {
+    switch (ast->type) {
+        case AST_ZERO:
+        // 0 places = trim leading zeros
+        case AST_INT: return (PictureType){ .type = TYPE_SIGNED_NUMERIC, .count = 0, .places = 0 };
+        case AST_FLOAT: return (PictureType){ .type = TYPE_DECIMAL_NUMERIC, .count = 0, .places = 0 };
+        case AST_STRING: {
+            PictureType type = (PictureType){ .type = TYPE_ALPHANUMERIC, .places = strlen(ast->constant.string) };
+            type.count = type.places; // Not sure if doing this in the initializer is UB.
+            return type;
+        }
+        case AST_VAR: return ast->var.sym->type;
+        case AST_PARENS: return get_value_type(ast->parens);
+        case AST_NOT:
+        case AST_MATH: return (PictureType){ .type = TYPE_DECIMAL_NUMERIC, .count = 0 };
+        case AST_BOOL:
+        case AST_NULL:
+        case AST_CONDITION: return (PictureType){ .type = TYPE_UNSIGNED_NUMERIC, .count = 0 };
+        case AST_SUBSCRIPT: {
+            PictureType type = get_value_type(ast->subscript.base);
+            Variable *sym = get_struct_sym(ast->subscript.base);
+
+            if (sym->count > 0 && sym->type.count > 0)
+                type.count = sym->type.places;
+            else if (ast->subscript.base->type != AST_FIELD)
+                type.count = 0;
+
+            return type;
+        }
+        // Make LENGTHOF COMP-5 to print as %zu
+        case AST_LENGTHOF: return (PictureType){ .type = TYPE_UNSIGNED_SUPRESSED_NUMERIC, .comp_type = COMP5, .count = 0, .places = 18 };
+        case AST_FIELD: return ast->field.sym->type;
+        case AST_ADDRESSOF:  {
+            PictureType type = get_value_type(ast->addressof_value);
+            return (PictureType){ .type = TYPE_POINTER, .count = type.count, .comp_type = COMP_POINTER };
+        }
+        default: break;
+    }
+
+    printf(">>>%s\n", asttype_to_string(ast->type));
+    assert(false);
+    return (PictureType){ .type = TYPE_SIGNED_NUMERIC, .count = 0 };
 }
 
 Parser create_parser(char *file, char **main_infiles) {
@@ -112,7 +172,7 @@ Parser create_parser(char *file, char **main_infiles) {
     tokens[token_count++] = tok;
     delete_lexer(&lex);
     return (Parser){ .file = file, .tokens = tokens, .token_count = token_count, .tok = &tokens[0], 
-        .pos = 0, .program_id = {0}, .in_main = false, .cur_div = DIV_NONE, .cur_sect = SECT_NONE, .parse_extra_value = true };
+        .pos = 0, .program_id = {0}, .in_main = false, .cur_div = DIV_NONE, .cur_sect = SECT_NONE, .parse_extra_value = true, .in_set = false };
 }
 
 void delete_parser(Parser *prs) {
@@ -186,8 +246,14 @@ AST *parse_value(Parser *prs, unsigned int type) {
         case AST_NOP:
         case AST_INT:
         case AST_FLOAT:
-        case AST_STRING:
+        case AST_STRING: break;
         case AST_VAR:
+            if (!prs->in_set && !value->var.sym->is_linkage_src && value->var.sym->type.comp_type == COMP_POINTER && !value->var.sym->pointer_been_set) {
+                log_error(prs->file, value->ln, value->col);
+                fprintf(stderr, "pointer variable '%s' used before being SET\n", value->var.name);
+                show_error(prs->file, value->ln, value->col);
+            }
+            break;
         case AST_PARENS:
         case AST_NOT:
         case AST_LABEL:
@@ -422,6 +488,12 @@ AST *parse_move(Parser *prs) {
     eat(prs, TOK_ID);
     //ast->move.dst = var;
     ast->move.dst = parse_value(prs, TYPE_ANY);
+
+    PictureType dst_type = get_value_type(ast->move.dst);
+
+    if (dst_type.comp_type == COMP_POINTER)
+        dst_type.pointer_uid = get_value_type(ast->move.dst).pointer_uid;
+
     /*
     eat(prs, TOK_ID);
 
@@ -776,7 +848,8 @@ bool validate_stmt(AST *stmt) {
         case AST_WRITE:
         case AST_INSPECT:
         case AST_ACCEPT:
-        case AST_EXIT: break;
+        case AST_EXIT:
+        case AST_SET_POINTER_TYPE: break;
         default:
             log_error(stmt->file, stmt->ln, stmt->col);
             fprintf(stderr, "invalid clause '%s'\n", asttype_to_string(stmt->type));
@@ -1263,11 +1336,25 @@ AST *parse_subscript(Parser *prs, AST *base) {
     return ast;
 }
 
+Variable *get_sym_from_ast(AST *ast) {
+    switch (ast->type) {
+        case AST_VAR: return ast->var.sym;
+        case AST_SUBSCRIPT: return get_sym_from_ast(ast->subscript.base);
+        case AST_FIELD: return ast->field.sym;
+        default: break;
+    }
+
+    fprintf(stderr, "BAD ERROR!!!");
+    exit(EXIT_FAILURE);
+    return NULL; // Shut gcc up.
+}
+
 AST *parse_set(Parser *prs) {
     const size_t ln = prs->tok->ln;
     const size_t col = prs->tok->col;
     eat(prs, TOK_ID);
 
+    /*
     Variable *var = find_variable(prs->file, prs->tok->value);
 
     if (!var->used) {
@@ -1288,13 +1375,18 @@ AST *parse_set(Parser *prs) {
 
     char *name = mystrdup(prs->tok->value);
     eat(prs, TOK_ID);
+    */
+
+    prs->in_set = true;
+
+    AST *dst = parse_value(prs, TYPE_ANY);
 
     if (strcmp(prs->tok->value, "UP") == 0 || strcmp(prs->tok->value, "DOWN") == 0) {
         TokenType math = strcmp(prs->tok->value, "UP") == 0 ? TOK_PLUS : TOK_MINUS;
         eat(prs, TOK_ID);
 
         if (!expect_identifier(prs, "BY")) {
-            free(name);
+            delete_ast(dst);
             eat_until(prs, TOK_DOT);
             return NOP(ln, col);
         }
@@ -1304,17 +1396,15 @@ AST *parse_set(Parser *prs) {
         AST *ast = create_ast(AST_ARITHMETIC, ln, col);
         ast->arithmetic.name = mystrdup(math == TOK_PLUS ? "ADD" : "SUBTRACT");
         ast->arithmetic.cloned_left = ast->arithmetic.cloned_right = false;
-        ast->arithmetic.dst = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
-        ast->arithmetic.dst->var.name = name;
-        ast->arithmetic.dst->var.sym = var;
+        ast->arithmetic.dst = dst;
         ast->arithmetic.implicit_giving = true;
-        ast->arithmetic.left = parse_value(prs, var->type.type);
+        ast->arithmetic.left = parse_value(prs, TYPE_ANY);
         ast->arithmetic.right = ast->arithmetic.dst;
         return ast;
     }
 
     if (!expect_identifier(prs, "TO")) {
-        free(name);
+        delete_ast(dst);
         eat_until(prs, TOK_DOT);
         return NOP(ln, col);
     }
@@ -1323,10 +1413,24 @@ AST *parse_set(Parser *prs) {
 
     AST *ast = create_ast(AST_MOVE, ln, col);
     ast->move.is_set = true;
-    ast->move.dst = create_ast(AST_VAR, prs->tok->ln, prs->tok->col);
-    ast->move.dst->var.name = name;
-    ast->move.dst->var.sym = var;
-    ast->move.src = parse_value(prs, var->type.type);
+    ast->move.dst = dst;
+    ast->move.src = parse_value(prs, TYPE_ANY);
+
+    prs->in_set = false;
+
+    PictureType dst_type = get_value_type(dst);
+
+    if (dst_type.comp_type != COMP_POINTER)
+        return ast;
+
+    // If we're setting a pointer address, we want that pointer to be
+    // used as the same type of the data it's pointing to.
+    AST *set = create_ast(AST_SET_POINTER_TYPE, ln, col);
+    set->set_pointer_type.sym = get_sym_from_ast(dst);
+    set->set_pointer_type.type = get_value_type(ast->move.src->addressof_value);
+    astlist_push(root_ptr, set);
+
+    set->set_pointer_type.sym->pointer_been_set = true;
     return ast;
 }
 
@@ -2041,6 +2145,8 @@ AST *parse_id(Parser *prs) {
         // other values getting inside strlen().
         // For example, LENGTH OF "lsdlk" - 2
         // We don't want the -2 to be part of the LENGTH OF.
+        // We do allow subscripts though because it's unlikely that they're
+        // used in the wrong place, and we may be subscripting a field or something.
 
         bool before = prs->parse_extra_value;
         prs->parse_extra_value = false;
@@ -2050,9 +2156,15 @@ AST *parse_id(Parser *prs) {
         if (is_length) {
             ast = create_ast(AST_LENGTHOF, ln, col);
             ast->lengthof_value = parse_value(prs, TYPE_ANY);
+
+            if (prs->tok->type == TOK_LPAREN)
+                ast->lengthof_value = parse_subscript(prs, ast->lengthof_value);
         } else {
             ast = create_ast(AST_ADDRESSOF, ln, col);
             ast->addressof_value = parse_value(prs, TYPE_ANY);
+
+            if (prs->tok->type == TOK_LPAREN)
+                ast->addressof_value = parse_subscript(prs, ast->addressof_value);
         }
 
         prs->parse_extra_value = before;
@@ -2662,7 +2774,7 @@ AST *parse_struct_pic(Parser *prs) {
             field = parse_struct_pic(prs);
         else if (strcmp(next2->value, "PIC") == 0)
             field = parse_pic(prs);
-        else if (IS_COMP(next2))
+        else if (strcmp(next2->value, "USAGE") == 0)
             field = parse_comp_pic(prs);
         else {
             assert(false);

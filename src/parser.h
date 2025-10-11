@@ -33,8 +33,11 @@ typedef struct {
     Division cur_div;
     Section cur_sect;
     bool parse_extra_value;
+    bool in_set;
 } Parser;
 
+Variable *get_struct_sym(AST *ast);
+PictureType get_value_type(AST *ast);
 AST *parse_file(char *file, char **main_files, bool *out_had_main);
 
 #endif

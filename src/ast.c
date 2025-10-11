@@ -262,6 +262,7 @@ char *asttype_to_string(ASTType type) {
         case AST_LENGTHOF: return "length";
         case AST_FIELD: return "field";
         case AST_ADDRESSOF: return "address";
+        case AST_SET_POINTER_TYPE: return "set";
     }
 
     assert(false);

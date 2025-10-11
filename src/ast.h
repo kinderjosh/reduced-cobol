@@ -34,6 +34,8 @@ typedef struct {
         COMP5,
         COMP6
     } comp_type;
+
+    size_t pointer_uid;
 } PictureType;
 
 typedef struct ASTList ASTList;
@@ -51,6 +53,8 @@ typedef struct Variable {
     bool using_in_proc_div;
     ASTList *fields;
     struct Variable *struct_sym;
+    size_t uid;
+    bool pointer_been_set;
 } Variable;
 
 typedef enum {
@@ -99,7 +103,8 @@ typedef enum {
     AST_EXIT,
     AST_LENGTHOF,
     AST_FIELD,
-    AST_ADDRESSOF
+    AST_ADDRESSOF,
+    AST_SET_POINTER_TYPE
 } ASTType;
 
 typedef struct AST AST;
@@ -360,6 +365,11 @@ typedef struct AST {
         } field;
 
         AST *addressof_value;
+
+        struct {
+            PictureType type;
+            Variable *sym;
+        } set_pointer_type;
     };
 } AST;
 
