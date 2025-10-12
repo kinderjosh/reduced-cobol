@@ -334,7 +334,7 @@ AST *parse_any_no_error(Parser *prs) {
 static bool displayed_previously;
 static bool first_display;
 
-#define LAST_DISPLAY_VALUE_WASNT_VALID(thing) (thing->type != AST_STRING && thing->type != AST_VAR && thing->type != AST_SUBSCRIPT && thing->type != AST_LENGTHOF && thing->type != AST_FIELD && thing->type != AST_ADDRESSOF)
+#define LAST_DISPLAY_VALUE_WASNT_VALID(thing) (thing->type != AST_STRING && thing->type != AST_VAR && thing->type != AST_SUBSCRIPT && thing->type != AST_LENGTHOF && thing->type != AST_FIELD && thing->type != AST_ADDRESSOF && thing->type != AST_ZERO)
 
 AST *parse_display(Parser *prs, ASTList *root) {
     const size_t ln = prs->tok->ln;
@@ -2123,7 +2123,7 @@ AST *parse_id(Parser *prs) {
         ast->bool_value = strcmp(prs->tok->value, "TRUE") == 0;
         eat(prs, TOK_ID);
         return ast;
-    } else if (strcmp(prs->tok->value, "ZERO") == 0) {
+    } else if (strcmp(prs->tok->value, "ZERO") == 0 || strcmp(prs->tok->value, "ZEROS") == 0 || strcmp(prs->tok->value, "ZEROES") == 0) {
         eat(prs, TOK_ID);
         return create_ast(AST_ZERO, ln, col);
     } else if (strcmp(prs->tok->value, "NOT") == 0)
