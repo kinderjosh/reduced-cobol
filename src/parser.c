@@ -26,6 +26,7 @@
 #define TABLE_SIZE 10000
 
 extern char *cur_dir;
+//extern ASTList delayed_assigns;
 
 static Variable variables[TABLE_SIZE];
 
@@ -2781,6 +2782,12 @@ AST *parse_struct_pic(Parser *prs) {
             break;
         }
 
+        if (field->pic.value != NULL) {
+            log_error(prs->file, field->ln, field->col);
+            fprintf(stderr, "assigning a value to group item field '%s' on initialization\n", field->pic.name);
+            show_error(prs->file, field->ln, field->col);
+        }
+
         // Make sure this symbol is known to be a field by filling
         // in the struct pointer symbol.
         Variable *fsym = find_variable(field->file, field->pic.name);
@@ -3447,6 +3454,8 @@ void parser_reset(Parser *prs) {
 AST *parse_file(char *file, char **main_infiles, bool *out_had_main) {
     *out_had_main = false;
     cur_file = mystrdup(file);
+    //delayed_assigns = create_astlist();
+
     Parser prs = create_parser(file, main_infiles);
 
     AST *root = create_ast(AST_ROOT, 1, 1);

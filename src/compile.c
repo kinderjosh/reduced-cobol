@@ -10,7 +10,7 @@
 #include <stdbool.h>
 #include <assert.h>
 
-#define RELEASE_CFLAGS "-std=c99 -O1"
+#define RELEASE_CFLAGS "-std=c99 -O1 -w"
 #define DEBUG_CFLAGS "-std=c99 -g"
 
 extern char *cc_path;

@@ -27,6 +27,10 @@ static char *function_predefs;
 static size_t function_predefs_len;
 static size_t function_predefs_cap;
 
+// We can't assign struct field values inside the struct definition,
+// so we'll delay the assign and do it at the start of the main function.
+//ASTList delayed_assigns;
+
 char *picturetype_to_c(PictureType *type) {
     if (type->comp_type == COMP_POINTER)
         return "void*";
@@ -230,6 +234,22 @@ char *emit_root(AST *root, bool require_main, char *source_includes) {
     function_predefs[0] = '\0';
     function_predefs_len = 0;
     function_predefs_cap = 1024;
+    
+    /*
+    for (size_t i = 0; i < delayed_assigns.size; i++) {
+        char *stmt = emit_stmt(delayed_assigns.items[i]);
+        const size_t stmt_len = strlen(stmt);
+
+        if (len + stmt_len + 1 >= cap) {
+            cap *= 2;
+            code = realloc(code, cap);
+        }
+
+        strcat(code, stmt);
+        free(stmt);
+        len += stmt_len;
+    }
+    */
 
     for (size_t i = 0; i < root->root.size; i++) {
         char *stmt = emit_stmt(root->root.items[i]);
@@ -262,6 +282,7 @@ char *emit_root(AST *root, bool require_main, char *source_includes) {
     free(globals);
     free(functions);
     free(function_predefs);
+    //delete_astlist(&delayed_assigns);
     return total;
 }
 
@@ -432,7 +453,9 @@ char *emit_struct_pic(AST *ast) {
         sprintf(code, "%sSTRUCT %s;\n", name, name);
 
     free(name);
-    return code;
+    append_global(code);
+    free(code);
+    return calloc(1, sizeof(char));
 }
 
 char *emit_move(AST *ast) {
@@ -1321,7 +1344,13 @@ char *emit_accept(AST *ast) {
 char *emit_lengthof(AST *ast) {
     char *value = value_to_string(ast->lengthof_value);
     char *code = malloc(strlen(value) + 11);
-    sprintf(code, "strlen(%s)", value);
+    PictureType type = get_value_type(ast->lengthof_value);
+
+    if (IS_STRING(type))
+        sprintf(code, "strlen(%s)", value);
+    else
+        sprintf(code, "sizeof(%s)", value);
+
     free(value);
     return code;
 }
